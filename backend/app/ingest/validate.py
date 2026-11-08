@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from app.domain.catalog import EMPTY_SPEC_VALUE
 from app.ingest.reader import Records
 from app.ingest.report import IngestReport
 from app.ingest.schemas import (
@@ -24,7 +25,6 @@ from app.ingest.schemas import (
     WarehouseRow,
 )
 
-EMPTY_SPEC_VALUE = "N/D"
 EXCEL_FIRST_DATA_ROW = 2  # row 1 is the header
 
 

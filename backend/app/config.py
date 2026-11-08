@@ -2,8 +2,9 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,13 +19,26 @@ class Settings(BaseSettings):
     dataset_path: Path = Path("data/raw/MercaNova_dataset_obligatorio_2.xlsx")
     ingest_report_path: Path = Path("reports/ingest_report.json")
 
-    # LLM: optional so the app starts without it (only the chat is disabled)
+    # OpenAI: optional so the app starts without it (chat and semantic search are disabled)
     openai_api_key: SecretStr | None = None
     llm_model: str = "gpt-6-luna"
+    llm_timeout_seconds: float = 60
+    llm_max_retries: int = 2  # retries on 429 / 5xx / timeout (with backoff, by the SDK)
+
+    # Embeddings (docs/PLAN.md §9.3)
+    embedding_provider: Literal["openai", "fake"] = "openai"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dim: int = 1536
+    embedding_batch_size: int = Field(default=100, ge=1, le=2048)
+    embedding_usd_per_1m_tokens: float = 0.02
+
+    @property
+    def openai_configured(self) -> bool:
+        return bool(self.openai_api_key and self.openai_api_key.get_secret_value())
 
     @property
     def chat_enabled(self) -> bool:
-        return bool(self.openai_api_key and self.openai_api_key.get_secret_value())
+        return self.openai_configured
 
 
 @lru_cache

@@ -16,9 +16,10 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 
 - [~] Esqueleto del monorepo + Docker (N1): backend + db listos (`/api/health`); **falta el frontend**
 - [x] Ingesta del Excel (N2): 8 hojas + reporte en `reports/ingest_report.json`. Los embeddings (paso 5) se suman con N8 y el usuario demo (paso 6) con N3
-- [ ] Resto del núcleo (N3–N14): ver `docs/PLAN.md` §20.1
+- [x] Búsqueda (N8): embeddings en `product_embeddings` (`scripts.index_embeddings`) + `retrieval/search.py` (filtros SQL + vectorial + usos como señal, RRF). La conecta al agente N9
+- [ ] Resto del núcleo (N3–N7, N9–N14): ver `docs/PLAN.md` §20.1
 
-> Actualizá esta checklist cuando se complete un ítem del núcleo.
+> Cuando se complete un ítem del núcleo, actualizá esta checklist **y** la columna "Estado" de `docs/PLAN.md` §20.1 en el mismo cambio.
 
 ## Prioridades
 
@@ -36,7 +37,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 | DB | PostgreSQL 16 + pgvector |
 | Frontend | React + Vite + TypeScript + shadcn/ui (Tailwind) + TanStack Query |
 | LLM | **OpenAI `gpt-6-luna`** vía **Responses API** (SDK `openai`, async), detrás de la interfaz `LLMProvider` (`docs/PLAN.md` §10.0) |
-| Embeddings | Locales con `fastembed` + `multilingual-e5-large`, dentro del backend (el catálogo está en inglés y los usuarios hablan español) |
+| Embeddings | **OpenAI `text-embedding-3-small`** (1536 dims) detrás de la interfaz `Embedder`; un vector por producto. Sin key se saltea y la búsqueda cae a full-text (`docs/PLAN.md` §9.3) |
 | Voz | faster-whisper local |
 | Tests | pytest (backend). Sin E2E |
 | Infra | Docker Compose: `db`, `backend`, `frontend`. El LLM es externo (API de OpenAI) |
@@ -51,7 +52,7 @@ backend/app/
   api/                 # routers FastAPI: solo HTTP, sin lógica de negocio
   auth/                # register, login, current_user
   domain/              # lógica de negocio PURA: catalog, inventory, cart, checkout, errors
-  retrieval/           # document_builder, embeddings, search (híbrida)
+  retrieval/           # document_builder, embeddings, indexer, search (híbrida), vocabulary (+ vocabulary_data/*.json)
   agent/               # llm/, tools.py, prompts/, response_schema.py, state.py, guardrails.py, loop.py
   stt/                 # transcriber
   models/  schemas/    # SQLAlchemy / Pydantic
@@ -64,11 +65,11 @@ docs/                  # PLAN.md, diagramas, capturas, informe
 ## Primer arranque (clone nuevo)
 
 ```bash
-cp .env.example .env          # OPENAI_API_KEY es opcional por ahora (solo la usa el chat)
+cp .env.example .env          # OPENAI_API_KEY: opcional para levantar; la usan el chat y los embeddings
 docker compose up --build
 ```
 
-Eso alcanza para tener la base cargada. **No hace falta correr migraciones ni la ingesta a mano**: el `entrypoint.sh` del backend ejecuta en orden `alembic upgrade head` → `python -m scripts.ingest --if-empty` → `uvicorn`.
+Eso alcanza para tener la base cargada. **No hace falta correr migraciones ni la ingesta a mano**: el `entrypoint.sh` del backend ejecuta en orden `alembic upgrade head` → `python -m scripts.ingest --if-empty` → `python -m scripts.index_embeddings` → `uvicorn`. Sin `OPENAI_API_KEY` el paso de embeddings se saltea; si falla, la API arranca igual.
 
 - Verificar: `curl localhost:8000/api/health` → `{"status":"ok","db":"ok",...}`. Tiene que haber 360 filas en `products`.
 - La ingesta escribe `reports/ingest_report.json` (ignorado por git). Hallazgos esperados: 0 filas rechazadas, 17 inactivos, 22 sin stock, 3 nombres duplicados y 37 specs vacías ("N/D").
@@ -90,6 +91,9 @@ cp .env.example .env                               # completar OPENAI_API_KEY
 docker compose up --build                          # levantar todo (migra e ingesta solo; ver "Primer arranque")
 docker compose exec backend alembic upgrade head   # migraciones (solo si agregás una nueva sin reiniciar)
 docker compose exec backend python -m scripts.ingest [--reset]   # re-ingesta manual; --reset también pisa el inventario
+docker compose exec backend python -m scripts.index_embeddings [--force]   # embeddings (solo lo que cambió; gasta centavos)
+docker compose exec backend python -m scripts.index_embeddings --query "auriculares para videollamadas"   # debug: top 5
+docker compose exec backend python -m scripts.search "headphones for video calls" --category Headphones --max-price 200 --use calls   # búsqueda real, con los args del agente
 docker compose exec backend pytest                 # tests (sin evals); los de integración usan TEST_DATABASE_URL
 docker compose exec backend ruff check . && docker compose exec backend ruff format --check .
 docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-luna (gasta créditos: correr a mano)
@@ -119,8 +123,8 @@ docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-l
     - Tools con `strict: true`, con el schema generado desde Pydantic.
     - El structured output se parsea desde el **item de salida correspondiente**, no desde `output_text`. Si no valida → retry de formato.
     - `429` / `5xx` / timeout → retry con backoff. `401` → error irrecuperable con mensaje claro. Se registra `usage` en cada llamada.
-    - **Sin `OPENAI_API_KEY`, la app tiene que levantar igual:** solo el chat queda deshabilitado, con un mensaje.
-    - **El código del agente no importa `openai` directamente:** solo el adaptador en `agent/llm/`.
+    - **Sin `OPENAI_API_KEY`, la app tiene que levantar igual:** el chat queda deshabilitado, con un mensaje, y la búsqueda semántica cae a full-text + filtros.
+    - **El código del agente no importa `openai` directamente:** solo el adaptador en `agent/llm/`. Para embeddings, el único que lo importa es `retrieval/embeddings.py`.
 
 ## Configuración y seguridad
 

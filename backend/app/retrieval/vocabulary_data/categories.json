@@ -1,0 +1,14 @@
+{
+  "Monitors": ["Office", "Professional", "Gaming"],
+  "Laptops": ["Ultrabook", "Business", "Creator", "Gaming"],
+  "Headphones": ["Over-Ear", "On-Ear", "True Wireless"],
+  "Keyboards": ["Mechanical", "Low Profile", "Ergonomic"],
+  "Mice": ["Productivity", "Gaming", "Ergonomic"],
+  "Webcams": ["Standard", "Streaming", "Conference"],
+  "Docking Stations": ["USB-C", "Thunderbolt", "Universal"],
+  "External Storage": ["Portable SSD", "Desktop SSD", "Rugged SSD"],
+  "Routers": ["Wi-Fi 6", "Wi-Fi 6E", "Wi-Fi 7"],
+  "Speakers": ["Desktop", "Portable", "Soundbar"],
+  "Printers": ["Inkjet", "Laser Mono", "Laser Color"],
+  "Tablets": ["Standard", "Professional", "Compact"]
+}

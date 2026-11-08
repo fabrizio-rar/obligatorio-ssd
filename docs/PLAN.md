@@ -4,6 +4,7 @@
 > Las marcas **🟡 A DISCUTIR** indican decisiones abiertas. Están todas juntas en [21. Preguntas abiertas](#21-preguntas-abiertas).
 > **v2:** se incorporó el análisis del dataset real (`MercaNova_dataset_obligatorio_2.xlsx`) y se definieron login simple, loop propio (sin LangGraph), streaming, shadcn/ui y testing sin E2E.
 > **v3:** el LLM es **OpenAI `gpt-6-luna`** por API (Responses API). Ollama sale del stack. Embeddings y voz siguen locales.
+> **v4 (08/11):** los embeddings pasan a la **API de OpenAI** (`text-embedding-3-small`, 1536 dims) en lugar de `fastembed` local (§9.3). La voz sigue local.
 
 ---
 
@@ -19,7 +20,7 @@
 | Ingesta | Script idempotente: las **8 hojas** del Excel → validación → tablas SQL normalizadas → embeddings |
 | Búsqueda | **Híbrida**: filtros SQL (categoría, precio, uso recomendado, stock) + vectorial + full-text, fusionadas con RRF |
 | Chunking | **1 documento por producto** (las descripciones tienen 170–280 caracteres), sin precio ni stock |
-| Embeddings | Modelo local **multilingüe** con `fastembed` dentro del backend: el catálogo está **en inglés** y el usuario habla **en español** |
+| Embeddings | **OpenAI `text-embedding-3-small`** (multilingüe): el catálogo está **en inglés** y el usuario habla **en español**. Un vector por producto |
 | LLM | **OpenAI `gpt-6-luna`** vía **Responses API** (function calling + structured outputs), detrás de una interfaz `LLMProvider`. ~USD 0,002 por turno |
 | Orquestación | **Loop propio** (sin LangGraph): un agente con tools para la conversación y un **workflow** para la compra |
 | Control de acciones | El LLM **no puede comprar**. Solo un botón de la UI confirma, vía un endpoint transaccional |
@@ -139,7 +140,7 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 | DB | **Postgres + pgvector** | SQLite + Chroma | Un solo motor: filtros y similitud en una query, y un servicio menos. Chroma (lo de clase) queda como alternativa documentada |
 | Frontend | **React + Vite + TS + shadcn/ui** | Next.js, MUI | SPA sin SSR. shadcn da componentes accesibles (Card, Dialog, Sheet, Table, Form) que se copian al repo y se modifican. TanStack Query sincroniza el carrito entre el chat y la UI |
 | LLM | **OpenAI `gpt-6-luna`** (API) | Ollama local (`qwen3:8b`, `llama3.1:8b`), Claude Haiku 5.5, GPT-6.1 Terra | Ver §10.0 |
-| Embeddings | **fastembed** + `multilingual-e5-large` (local, dentro del backend) | OpenAI embeddings, `bge-m3` vía Ollama | Sin costo ni dependencia de red para indexar; un servicio menos. Ver §9.3 |
+| Embeddings | **OpenAI `text-embedding-3-small`** (API) | `fastembed` + `multilingual-e5-large` (local), `bge-m3` vía Ollama | Costo casi nulo, contenedores livianos (sin bajar un modelo de ~2 GB en cada máquina) y el SDK ya está en el stack. El chat ya depende de la key. Ver §9.3 |
 | Orquestación | **Loop propio** + `LLMProvider` | LangGraph, LangChain | Ver §10.1 |
 | STT | **faster-whisper** | Web Speech API, Whisper API | Gratis, offline, reproducible y testeable |
 | Auth | Usuario y contraseña + token opaco | JWT, OAuth | Lo mínimo que pide la clase ("registro e inicio de sesión simples"). Un token en la DB permite logout real sin manejar firmas |
@@ -224,11 +225,11 @@ mercanova/
 ### 6.1 Servicios
 | Servicio | Imagen | Puerto | Responsabilidad |
 |---|---|---|---|
-| `db` | `pgvector/pgvector:pg16` | 5432 | Datos y vectores |
-| `backend` | build `./backend` | 8000 | API, auth, agente (llama a la API de OpenAI), ingesta, embeddings, STT |
+| `db` | `pgvector/pgvector:pg16` | 5432 (en el host: `127.0.0.1:5433`, configurable con `POSTGRES_HOST_PORT`) | Datos y vectores |
+| `backend` | build `./backend` | 8000 | API, auth, agente y embeddings (llaman a la API de OpenAI), ingesta, STT |
 | `frontend` | build `./frontend` (build de Vite servido con nginx) | 5173 → 80 | SPA |
 
-Son tres servicios. El LLM es externo (API de OpenAI); embeddings y voz corren **dentro** del backend.
+Son tres servicios. El LLM y los embeddings son externos (API de OpenAI); la voz corre **dentro** del backend.
 
 > ⚠️ **Requiere `OPENAI_API_KEY`** en `.env` para el chat. Sin key, la app levanta igual: catálogo, carrito, checkout, órdenes y voz funcionan, y el chat muestra "Asistente no disponible: falta configurar OPENAI_API_KEY". Los tests no necesitan key (usan `FakeLLM`).
 > ⚠️ **nginx y SSE:** desactivar el buffering (`proxy_buffering off`) en la ruta `/api/chat/stream`, o servir la API directo en `:8000` (más simple).
@@ -252,11 +253,11 @@ services:
     build: ./backend
     env_file: .env
     depends_on: { db: { condition: service_healthy } }
-    # entrypoint: alembic upgrade head && python -m scripts.ingest --if-empty && uvicorn app.main:app --host 0.0.0.0
+    # backend/entrypoint.sh: alembic upgrade head -> python -m scripts.ingest --if-empty -> uvicorn
     ports: ["8000:8000"]
     volumes:
       - ./data:/app/data:ro
-      - models_cache:/root/.cache      # modelos de embeddings y whisper (se bajan una vez)
+      - models_cache:/root/.cache      # modelo de whisper (se baja una vez)
 
   frontend:
     build: { context: ./frontend, args: { VITE_API_URL: "${VITE_API_URL}" } }
@@ -278,7 +279,13 @@ docker compose up --build
 POSTGRES_DB=mercanova
 POSTGRES_USER=mercanova
 POSTGRES_PASSWORD=change-me
+POSTGRES_HOST_PORT=5433           # puerto en el host para DBeaver/psql (5432 suele estar ocupado)
 DATABASE_URL=postgresql+psycopg://mercanova:change-me@db:5432/mercanova
+TEST_DATABASE_URL=postgresql+psycopg://mercanova:change-me@db:5432/mercanova_test   # tests de integración
+
+# Ingesta
+DATASET_PATH=data/raw/MercaNova_dataset_obligatorio_2.xlsx
+INGEST_REPORT_PATH=reports/ingest_report.json   # ./reports se monta en el host
 
 # Auth
 AUTH_TOKEN_TTL_HOURS=72
@@ -296,10 +303,12 @@ AGENT_TURN_TIMEOUT_SECONDS=90
 AGENT_MAX_TOKENS_PER_TURN=12000
 LLM_MAX_RETRIES=2
 
-# Embeddings
-EMBEDDING_PROVIDER=fastembed
-EMBEDDING_MODEL=intfloat/multilingual-e5-large
-EMBEDDING_DIM=1024
+# Embeddings (OpenAI API; sin OPENAI_API_KEY se saltea el indexado)
+EMBEDDING_PROVIDER=openai         # openai | fake (tests)
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIM=1536                # tiene que coincidir con VECTOR(n) de la migración 0002
+EMBEDDING_BATCH_SIZE=100
+EMBEDDING_USD_PER_1M_TOKENS=0.02  # solo para estimar el costo en el reporte
 
 # STT
 STT_PROVIDER=faster_whisper
@@ -340,15 +349,15 @@ erDiagram
 | Tabla | Campos | Notas |
 |---|---|---|
 | `brands` | `id` (BR001), `name`, `country_of_origin`, `positioning` | |
-| `categories` | `id` (CAT01), `name` | |
-| `subcategories` | `id` (SUB001), `category_id`, `name`, `sort_order` | |
+| `categories` | `id` (CAT01), `name`, `department` | `department` viene de la hoja `Categories` |
+| `subcategories` | `id` (SUB001), `category_id`, `name`, `sort_order` | El nombre **no es único** (5 se repiten entre categorías) |
 | `products` | `id` (MN-HDP-0004), `sku`, `name`, `brand_id`, `subcategory_id`, `short_description`, `description`, `recommended_for TEXT[]`, `not_recommended_for TEXT[]`, `key_features TEXT[]`, `tags TEXT[]`, `color`, `weight_kg`, `width_cm`, `height_cm`, `depth_cm`, `warranty_months`, `return_days`, `rating`, `review_count`, `launch_date`, `active`, `image_url` | Los campos separados por `;` pasan a arrays. Índice GIN en `recommended_for` |
 | `prices` | `product_id PK`, `currency`, `list_price`, `current_price`, `discount_percent`, `tax_included`, `updated_at` | Separada: es dato **dinámico** |
 | `product_specs` | `product_id`, `attribute_group`, `attribute_name`, `value_text`, `value_number`, `unit` | PK (`product_id`, `attribute_name`) |
 | `product_relations` | `product_id`, `related_product_id`, `relation_type`, `strength` | |
 | `warehouses` | `id`, `name`, `city`, `department`, `country`, `pickup_enabled`, `shipping_enabled` | |
 | `inventory` | `product_id`, `warehouse_id`, `on_hand_qty`, `reserved_qty`, `available_qty GENERATED ALWAYS AS (on_hand_qty - reserved_qty) STORED`, `updated_at` | `CHECK (on_hand_qty >= reserved_qty AND reserved_qty >= 0)`. El estado (In/Low/Out) se **calcula** |
-| `product_embeddings` | `product_id PK`, `content`, `content_hash`, `embedding VECTOR(1024)`, `model` | Índice HNSW coseno |
+| `product_embeddings` | `product_id PK`, `content`, `content_hash`, `embedding VECTOR(1536)`, `model` | Índice HNSW coseno |
 | `products.search_tsv` | `tsvector` generado (config `english`) | Índice GIN |
 
 Vista `product_availability`: `product_id`, `SUM(available_qty) AS available`, estado calculado. La usan el catálogo, las tools y el carrito.
@@ -389,6 +398,7 @@ Vista `product_availability`: `product_id`, `SUM(available_qty) AS available`, e
 4. Cargar     orden por dependencias: brands → categories → subcategories → products → prices
               → specs → warehouses → inventory → relations   (upsert por clave natural, 1 transacción)
 5. Indexar    document_builder → hash → embed solo si cambió → upsert product_embeddings
+              (comando aparte: `python -m scripts.index_embeddings`, ver §9.3)
 6. Seed       usuario demo (si SEED_DEMO_USER)
 7. Reportar   por hoja: leídas / insertadas / actualizadas / rechazadas (+ motivos)
 ```
@@ -397,6 +407,11 @@ Vista `product_availability`: `product_id`, `SUM(available_qty) AS available`, e
 - **Idempotente:** upsert por clave natural y embeddings por hash.
 - **En re-ingestas no se pisa el inventario** salvo con `--reset`, para que las compras hechas no se "deshagan".
 - La app **nunca** lee el Excel en runtime.
+- `Products` trae los **nombres** de categoría y subcategoría, no los IDs: `subcategory_id` se resuelve por el par (categoría, subcategoría), porque hay nombres de subcategoría repetidos entre categorías. Si no matchea, se rechaza la fila.
+- Un producto rechazado arrastra a sus dependientes (precio, specs, inventario, relaciones), que se rechazan con motivo.
+- `--reset` solo sobrescribe el inventario con el Excel; no borra tablas ni productos. Las filas que ya no están en el Excel no se eliminan.
+- `inventory_status` no se guarda: se valida contra la regla (`domain/inventory.py::stock_status`) y después se calcula.
+- Estado: pasos 1–4 y 7 en `app/ingest/` (N2); paso 5 en `app/retrieval/indexer.py` (N8, parcial). El 6 llega con N3.
 - El reporte de ingesta va como evidencia al PDF (manejo de errores y calidad de datos). Hallazgos esperados: 37 specs vacías, 3 nombres duplicados y 17 inactivos.
 
 ---
@@ -434,38 +449,54 @@ Tags: audio; headphones; over-ear; music; calls; commuting
 
 ### 9.3 Embeddings
 - **Multilingüe, obligatorio:** el buscador de la UI recibe texto en español y lo compara contra documentos en inglés.
-- **Decisión:** `fastembed` dentro del backend con `intfloat/multilingual-e5-large` (1024 dims). Usa los prefijos `query:` y `passage:` propios de e5.
-  - Por qué local aunque tengamos key de OpenAI: indexar y buscar desde el catálogo no cuesta nada ni depende de la red, el buscador de la UI sigue andando sin key y no suma otro proveedor.
-  - 🟡 Medir latencia en CPU; si es lento, `multilingual-e5-small` (384 dims).
-- Interfaz `Embedder.embed_documents()` / `embed_query()`, con modelo y dimensión por env var.
-- 360 productos → la indexación completa tarda segundos o pocos minutos en CPU, y una sola vez.
+- **Decisión (v4):** **API de OpenAI** con `text-embedding-3-small` (1536 dims), detrás de la interfaz `Embedder.embed_documents()` / `embed_query()` (`retrieval/embeddings.py`). Modelo, dimensión y proveedor por env var.
+  - **Por qué API y no `fastembed` local:** el costo es casi nulo (indexar los 360 productos ≈ 90 mil tokens ≈ USD 0,002; cada consulta, fracciones de centavo); evita bajar un modelo de ~2 GB y sumar 2–3 GB de RAM en la máquina de cada integrante; el SDK `openai` ya está en el stack, y el chat ya depende de la key.
+  - **Costo de la decisión:** la búsqueda semántica necesita key y red **también al consultar**. **Fallback:** sin key, o si la API falla, el indexado se saltea (con aviso) y la búsqueda cae a full-text + filtros SQL. La app levanta igual.
+  - `fastembed` + `multilingual-e5-large` queda como alternativa documentada: sería otra clase detrás de `Embedder`.
+- **Un vector por producto** (§9.2): los documentos son cortos (~150–250 tokens) y tratan de un solo producto, así que el vector no se diluye; partirlos haría perder contexto (un chunk de specs no sabe de qué producto es). Lo que el vector capta mal (números, specs puntuales, nombres exactos) lo cubren los filtros SQL y el full-text (§9.5). 🟡 A futuro, multi-vector o split por campo **si las evals lo justifican**.
+- **Indexado:** `python -m scripts.index_embeddings [--force]`. El entrypoint lo corre en cada arranque, después de la ingesta. Solo embebe lo nuevo o cambiado (`content_hash = sha256(modelo + texto)`): sin cambios no hace ninguna llamada, y si cambia el modelo se re-embebe todo. Hace commit por lote: si la API falla a mitad, se conserva lo hecho. Si falla, el arranque sigue. Escribe `reports/embeddings_report.json` (tokens y costo estimado).
+- **Debug:** `python -m scripts.index_embeddings --query "auriculares para videollamadas"` imprime el top 5 por coseno (no es la búsqueda de N8).
+- Retries: el SDK reintenta `429`/`5xx`/timeout con backoff (`LLM_MAX_RETRIES`); `401`/`403` son errores irrecuperables con mensaje claro.
+- Tests con `FakeEmbedder` (vectores deterministas, sin red): `pytest` no llama a OpenAI.
 
 ### 9.4 Vectorización
 `VECTOR(EMBEDDING_DIM)` + índice `HNSW (vector_cosine_ops)`. Con 360 filas un scan exacto alcanza; el índice se crea para mostrar el patrón.
 
 ### 9.5 Búsqueda híbrida (`retrieval/search.py`)
+**La búsqueda es solo por chat:** el usuario escribe en español y el agente llama a `search_products` con la consulta **traducida al inglés** y los filtros que extrae del texto. No hay buscador ni filtros en la UI.
+
 ```python
 SearchQuery(
-    query: str,                          # en inglés si viene del agente: "comfortable headphones for video calls"
-    category: Category | None,           # enum de las 12
-    subcategory: str | None,
-    brand: str | None,
+    query: str,                              # en inglés: "comfortable headphones for video calls"
+    category: Category | None,               # enum de las 12
+    subcategory: str | None,                 # validada contra la categoría (los nombres se repiten)
+    brand: str | None,                       # contra la tabla brands, sin distinguir mayúsculas
     min_price: Decimal | None,
     max_price: Decimal | None,
-    use_cases: list[UseCase] = [],       # enum de los 34 valores de recommended_for
-    exclude_use_cases: list[UseCase] = [],  # contra not_recommended_for
+    use_cases: list[UseCase] = [],           # enum de los 34 valores de recommended_for
+    exclude_use_cases: list[AvoidCase] = [], # enum de los 5 valores de not_recommended_for (vocabulario propio)
     in_stock_only: bool = True,
-    limit: int = 5,
+    limit: int = 5,                          # 1–10
     # 🟡 fase 2: spec_filters: list[{attribute, op, value}] validado contra los atributos de la categoría
 )
 ```
-1. **Filtros duros en SQL:** `active = true`, categoría, subcategoría, marca, precio (`current_price`), `recommended_for @> use_cases`, `NOT (not_recommended_for && exclude_use_cases)` y `available > 0` cuando corresponde.
-2. **Ranking semántico:** top 20 por coseno dentro del conjunto filtrado.
-3. **Ranking léxico:** `ts_rank` en inglés (sirve para "Vector Air 690" o "Thunderbolt").
-4. **Fusión RRF** (`k = 60`), con desempate por rating y luego por cantidad de reviews.
-5. **Relajación controlada:** si no hay resultados, se reintenta relajando **una** restricción (primero el stock, después el precio +20%, después los usos) y se devuelve `relaxed: {constraint, detail}`. El agente lo explica ("no hay con ANC bajo 200; el más cercano cuesta 210").
+**Vocabulario en JSON:** categorías con sus subcategorías y los dos vocabularios de usos viven en `retrieval/vocabulary_data/*.json` y se cargan como enums (`retrieval/vocabulary.py`). Un test de integración verifica que coincidan con la DB. `use_case_categories()` dice en qué categorías aparece cada uso, para la descripción de la tool (N9): los auriculares usan `calls`, no `video calls`.
 
-Salida: `[{product_id, sku, name, brand, category, subcategory, current_price, list_price, discount_percent, available, rating, key_features, recommended_for}]`, con precio y stock leídos de SQL en ese momento.
+1. **Filtros duros en SQL:** `active = true` (siempre), categoría, subcategoría, marca, precio (`current_price`), `NOT (not_recommended_for && exclude_use_cases)` y `available > 0` cuando corresponde.
+2. **Ranking semántico:** top 20 por coseno dentro del conjunto filtrado.
+3. **Ranking por usos:** los candidatos que tienen los usos pedidos, por cantidad de coincidencias. **Es una señal de ranking, no un filtro:** un uso mal elegido empeora el orden pero nunca deja el resultado vacío. Así, el ejemplo de la letra con `video calls` en auriculares pasó de 0 resultados a 5.
+4. **Fusión RRF** (`k = 60`) de los rankings 2 y 3, con desempate por rating y luego por cantidad de reviews. Los candidatos que no están en ningún ranking (por ejemplo, un producto todavía sin embedding) no se ocultan: van al final.
+5. **Fallback:** si falla el embedding de la consulta, se rankea por usos y rating y el resultado avisa con `semantic_used: false`.
+6. **Resultado:** precio y stock **leídos de la DB** (nunca del índice), más SKU (por los nombres duplicados), estado de stock y usos que matchearon. Los errores son `DomainError` tipados (por ejemplo `UNKNOWN_BRAND`, con las marcas válidas en `details`).
+
+Probar a mano: `python -m scripts.search "comfortable headphones for video calls" --category Headphones --max-price 200 --use calls`.
+
+**Hallazgos de la validación con datos reales (evidencia para el PDF):**
+- Una consulta en español **sin traducir y sin filtros** ("auriculares para videollamadas") trae webcams: el vector se queda con "videollamadas". Con la consulta en inglés y `category = Headphones` vienen solo auriculares. Por eso la traducción y los filtros los arma el agente, y las evals lo verifican.
+- Con `--use photos` sin categoría aparecen impresoras: en el dataset, `photos` es un uso de impresoras. El agente tiene que elegir la categoría; la descripción de los usos por categoría (N9) lo guía.
+- Los números ("alta tasa de refresco", "batería ≥ 20 h") no los capta el vector: eso es `spec_filters` (E8).
+- Un producto sin stock buscado por nombre no aparece con `in_stock_only = true`. Para productos nombrados, el agente usa `get_product` (N9), que sí informa "sin stock" o "discontinuado".
+- 🟡 **E5** (full-text + RRF) y **E6** (relajación) quedan como extras: con la consulta en inglés, el vector ya encuentra nombres exactos, y como los usos no filtran, "0 resultados" solo queda para filtros imposibles, que el agente explica.
 
 ---
 
@@ -1135,22 +1166,22 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 **Hito clave (domingo 23/11): el núcleo compra de punta a punta.** Si el 23/11 no se puede ir de una consulta al chat a una orden confirmada con el stock descontado, **se congela todo lo extra** hasta lograrlo.
 
 **Núcleo (obligatorio; cubre todos los RF de la letra):**
-| # | Funcionalidad | Cubre | Responsable |
-|---|---|---|---|
-| N1 | Monorepo + `docker compose up` (db, backend, frontend) + `.env.example` | RNF-01/02/03/07 | C |
-| N2 | Ingesta de las 8 hojas + reporte | §8 | A |
-| N3 | Login y register simples | — | A + C |
-| N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C |
-| N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C |
-| N6 | Checkout con **envío y retiro** + modal de confirmación (acción, productos, cantidades, precios, total) + transacción con **revalidación de precio, stock y activo** + asignación por sucursal | RF-11..15 | A + C |
-| N7 | Historial de órdenes | RF-16 | A + C |
-| N8 | Búsqueda: filtros SQL + **vectorial** (embeddings multilingües) | RF-02 | B |
-| N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B |
-| N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B |
-| N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C |
-| N12 | Voz (faster-whisper + botón 🎤) | RF-08 | B + C |
-| N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos |
-| N14 | `AGENTS.md` + 2 skills | §17 | Todos |
+| # | Funcionalidad | Cubre | Responsable | Estado |
+|---|---|---|---|---|
+| N1 | Monorepo + `docker compose up` (db, backend, frontend) + `.env.example` | RNF-01/02/03/07 | C | 🟡 backend + db listos; falta frontend |
+| N2 | Ingesta de las 8 hojas + reporte | §8 | A | ✅ |
+| N3 | Login y register simples | — | A + C | ⬜ |
+| N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C | ⬜ |
+| N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C | ⬜ |
+| N6 | Checkout con **envío y retiro** + modal de confirmación (acción, productos, cantidades, precios, total) + transacción con **revalidación de precio, stock y activo** + asignación por sucursal | RF-11..15 | A + C | ⬜ |
+| N7 | Historial de órdenes | RF-16 | A + C | ⬜ |
+| N8 | Búsqueda: filtros SQL + **vectorial** (embeddings multilingües) | RF-02 | B | ✅ `retrieval/search.py` (la tool la conecta N9) |
+| N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | ⬜ |
+| N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B | ⬜ |
+| N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ⬜ |
+| N12 | Voz (faster-whisper + botón 🎤) | RF-08 | B + C | ⬜ |
+| N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | ⬜ |
+| N14 | `AGENTS.md` + 2 skills | §17 | Todos | ⬜ |
 
 **Extras (en orden de prioridad; se cortan desde el final):**
 | # | Extra | Si no llega |
@@ -1180,7 +1211,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 1. **Video:** ¿~5 minutos (letra) o hasta 15 (clase)?
 
 **Entre nosotros**
-2. Embeddings: `multilingual-e5-large` o `-small` según la latencia en CPU (§9.3).
+2. ~~Embeddings: `multilingual-e5-large` o `-small`~~ → resuelto en v4: OpenAI `text-embedding-3-small` (§9.3).
 3. ¿`spec_filters` en `search_products` (fase 2)? (§9.5)
 4. ¿Skills de la aplicación? (§10.10)
 5. ¿Streaming token a token si sobra tiempo? (§10.8)
@@ -1189,7 +1220,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 8. ¿Cómo prueba el docente el chat? ¿Usa su propia key, o le pasamos una key con límite de gasto **por fuera del repo**? (Nunca en el PDF ni en el código.)
 
 **Ya decidido:**
-- **LLM: OpenAI `gpt-6-luna`** por Responses API (§10.0). Embeddings y voz locales. Sin Ollama.
+- **LLM: OpenAI `gpt-6-luna`** por Responses API (§10.0). Embeddings por API de OpenAI (`text-embedding-3-small`, §9.3). Voz local. Sin Ollama.
 - Envío a domicilio **y** retiro en sucursal (§12.2), con `order_item_allocations`.
 - Niveles de control de acciones con Deshacer y confirmación para quitar o vaciar (§10.4.1).
 - Checkout precargado desde el chat (§10.4.1). Prioridad: semana 4.

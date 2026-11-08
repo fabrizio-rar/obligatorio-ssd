@@ -11,6 +11,7 @@ from app.models.catalog import (
     Subcategory,
     Warehouse,
 )
+from app.models.retrieval import ProductEmbedding
 
 __all__ = [
     "Brand",
@@ -18,6 +19,7 @@ __all__ = [
     "Inventory",
     "Price",
     "Product",
+    "ProductEmbedding",
     "ProductRelation",
     "ProductSpec",
     "Subcategory",

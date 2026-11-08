@@ -8,9 +8,12 @@ from sqlalchemy import (
     Computed,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
+    column,
+    table,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
@@ -171,3 +174,13 @@ class ProductRelation(Base):
             name="ck_relations_type",
         ),
     )
+
+
+# Read-only view created in migration 0001: total available stock and its status per product.
+# Lightweight construct (not in Base.metadata) because it is not a table we write to.
+product_availability = table(
+    "product_availability",
+    column("product_id", String),
+    column("available", Integer),
+    column("status", String),
+)

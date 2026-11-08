@@ -14,6 +14,10 @@ dependencies = [
     # Ingest: read the Excel dataset (pandas uses openpyxl for .xlsx)
     "pandas>=2.2",
     "openpyxl>=3.1",
+    # Embeddings via the OpenAI API (also used later by the LLM adapter)
+    "openai>=1.60",
+    # VECTOR column type for SQLAlchemy (pgvector extension)
+    "pgvector>=0.3",
 ]
 
 [dependency-groups]

@@ -1,7 +1,8 @@
 from decimal import Decimal
 
+from app.domain.catalog import EMPTY_SPEC_VALUE
 from app.ingest.report import IngestReport
-from app.ingest.validate import EMPTY_SPEC_VALUE, validate_catalog
+from app.ingest.validate import validate_catalog
 from tests.factories import EXPECTED_LAUNCH_DATE, make_records
 
 

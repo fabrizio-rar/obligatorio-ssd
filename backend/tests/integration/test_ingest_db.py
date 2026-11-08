@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
 
+from app.domain.catalog import EMPTY_SPEC_VALUE
 from app.ingest.pipeline import ingest_records
-from app.ingest.validate import EMPTY_SPEC_VALUE
 from app.models import Inventory, Price, Product, ProductSpec
 from tests.factories import make_records
 
