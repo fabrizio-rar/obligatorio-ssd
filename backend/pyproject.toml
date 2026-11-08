@@ -20,6 +20,8 @@ dependencies = [
     "pgvector>=0.3",
     # Password hashing (AGENTS.md: passwords stored with bcrypt)
     "bcrypt>=4.2",
+    # Needed by FastAPI to receive file uploads (POST /api/transcribe)
+    "python-multipart>=0.0.20",
 ]
 
 [dependency-groups]

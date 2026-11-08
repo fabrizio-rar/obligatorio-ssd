@@ -4,8 +4,9 @@
 > Las marcas **🟡 A DISCUTIR** indican decisiones abiertas. Están todas juntas en [21. Preguntas abiertas](#21-preguntas-abiertas).
 > **v2:** se incorporó el análisis del dataset real (`MercaNova_dataset_obligatorio_2.xlsx`) y se definieron login simple, loop propio (sin LangGraph), streaming, shadcn/ui y testing sin E2E.
 > **v3:** el LLM es **OpenAI `gpt-6-luna`** por API (Responses API). Ollama sale del stack. Embeddings y voz siguen locales.
-> **v4 (08/11):** los embeddings pasan a la **API de OpenAI** (`text-embedding-3-small`, 1536 dims) en lugar de `fastembed` local (§9.3). La voz sigue local.
-> **Estado (08/11):** backend del núcleo implementado salvo checkout/órdenes (N6–N7) y voz (N12). Resumen en [0.1 Estado de la implementación](#01-estado-de-la-implementación-backend-0811). Cómo levantarlo: `README.md`.
+> **v4 (08/11):** los embeddings pasan a la **API de OpenAI** (`text-embedding-3-small`, 1536 dims) en lugar de `fastembed` local (§9.3).
+> **v5 (08/11):** la voz también pasa a la **API de OpenAI** (`gpt-4o-transcribe`) en lugar de faster-whisper local (§11).
+> **Estado (08/11):** backend del núcleo implementado salvo checkout/órdenes (N6–N7). Resumen en [0.1 Estado de la implementación](#01-estado-de-la-implementación-backend-0811). Cómo levantarlo: `README.md`.
 
 ---
 
@@ -27,7 +28,7 @@
 | Control de acciones | El LLM **no puede comprar**. Solo un botón de la UI confirma, vía un endpoint transaccional |
 | Anti-alucinación | Structured output con `product_ids`; las tarjetas se renderizan **desde la DB**; se valida la salida |
 | Streaming | **SSE** con eventos de progreso ("Buscando auriculares…") y respuesta final (extra E2). **Hoy:** `POST /api/chat` devuelve la respuesta completa. Streaming de tokens como mejora opcional |
-| Voz | `MediaRecorder` → `POST /api/transcribe` → **faster-whisper local** → texto editable en el input |
+| Voz | `MediaRecorder` → `POST /api/transcribe` → **API de OpenAI (`gpt-4o-transcribe`)** → texto editable en el input → mismo `POST /api/chat` que el texto |
 | Testing | Unit + integración (API + DB) + agente con LLM mockeado + **evals**. **Sin E2E** (la letra no lo pide) |
 | Coding agent | `AGENTS.md`, `CLAUDE.md` → `@AGENTS.md`, y ≥2 skills en `.claude/skills/` |
 | **Priorización** | **Núcleo (N1–N14) listo para el 23/11**; después los extras (E1–E8) en orden. Semana 5 solo documentación y video (§20.1) |
@@ -44,7 +45,7 @@
 | Carrito | ✅ CRUD con validación suave de stock; ítems que dejan de venderse quedan marcados | `app/domain/cart.py`, `/api/cart*` |
 | Agente + chat | ✅ `POST /api/chat` (con login, varios turnos, sin streaming), 9 tools, guardrails, stop conditions, historial | `app/agent/`, `/api/chat`, `/api/conversations*` |
 | Checkout + órdenes | ⬜ N6–N7 (§12.1, §12.2), y las tools `get_orders`, `get_order`, `start_checkout` | — |
-| Voz | ⬜ N12 (§11) | — |
+| Voz | ✅ `POST /api/transcribe` (API de OpenAI, ~1 s por mensaje); falta el botón 🎤 en la UI | `app/stt/`, `app/api/transcribe.py` |
 | Frontend | ⬜ N1 (parte FE), N3–N7 y N11 (UI) | — |
 | Tests | ✅ 260 tests (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM`. Faltan los de la transacción de compra y concurrencia (N6) | `backend/tests/` |
 | Skills del coding agent | ✅ `testing`, `mercanova-review`, `add-agent-tool` | `.claude/skills/` |
@@ -126,7 +127,7 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 | RF-05 | Aclaraciones | `type: "clarification"` + reglas del prompt + evals. También al desambiguar nombres duplicados | agent | ✅ |
 | RF-06 | Comparación | `compare_products` → tabla de specs alineadas por atributo | agent + FE | ✅ tool + `/api/products/compare` (tabla UI ⬜) |
 | RF-07 | Información actual | Precio y stock **solo** desde tools que leen la DB, nunca desde el índice vectorial | tools | ✅ |
-| RF-08 | Voz | faster-whisper (§11) | stt | ⬜ |
+| RF-08 | Voz | API de OpenAI, `gpt-4o-transcribe` (§11) | stt | ✅ `POST /api/transcribe` (botón 🎤 en la UI ⬜) |
 | RF-09 | Carrito | Dominio `cart` + REST + tools (misma lógica) | domain | ✅ REST + 5 tools (UI ⬜) |
 | RF-10 | Validación de disponibilidad | Al agregar (suave, contra el disponible total) y al confirmar (dura, transaccional) | domain | 🟡 suave ✅; dura (al confirmar) ⬜ N6 |
 | RF-11 | Checkout | Nombre, email, **método de entrega** (envío a domicilio con dirección, o retiro en una sucursal que tenga stock de todo el carrito), pago **simulado** | FE + domain | ⬜ |
@@ -160,7 +161,7 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 | LLM | **OpenAI `gpt-6-luna`** (API) | Ollama local (`qwen3:8b`, `llama3.1:8b`), Claude Haiku 5.5, GPT-6.1 Terra | Ver §10.0 |
 | Embeddings | **OpenAI `text-embedding-3-small`** (API) | `fastembed` + `multilingual-e5-large` (local), `bge-m3` vía Ollama | Costo casi nulo, contenedores livianos (sin bajar un modelo de ~2 GB en cada máquina) y el SDK ya está en el stack. El chat ya depende de la key. Ver §9.3 |
 | Orquestación | **Loop propio** + `LLMProvider` | LangGraph, LangChain | Ver §10.1 |
-| STT | **faster-whisper** | Web Speech API, Whisper API | Gratis, offline, reproducible y testeable |
+| STT | **API de OpenAI** (`gpt-4o-transcribe`) | faster-whisper local, Web Speech API, `gpt-4o-mini-transcribe` | La voz solo alimenta el chat, que ya depende de la key: lo local no aporta offline. Más rápida (~1 s vs. 2–6 s en CPU, Docker en Mac no usa GPU), mejor en español, sin un modelo de 0,5 GB en cada máquina. Costo ~USD 0,001 por mensaje. Contra: el audio sale a OpenAI (privacidad) y depende de la red. Ver §11 |
 | Auth | Usuario y contraseña + token opaco | JWT, OAuth | Lo mínimo que pide la clase ("registro e inicio de sesión simples"). Un token en la DB permite logout real sin manejar firmas |
 
 ---
@@ -244,10 +245,10 @@ mercanova/
 | Servicio | Imagen | Puerto | Responsabilidad |
 |---|---|---|---|
 | `db` | `pgvector/pgvector:pg16` | 5432 (en el host: `127.0.0.1:5433`, configurable con `POSTGRES_HOST_PORT`) | Datos y vectores |
-| `backend` | build `./backend` | 8000 | API, auth, agente y embeddings (llaman a la API de OpenAI), ingesta, STT |
+| `backend` | build `./backend` | 8000 | API, auth, agente, embeddings y voz (llaman a la API de OpenAI), ingesta |
 | `frontend` | build `./frontend` (build de Vite servido con nginx) | 5173 → 80 | SPA |
 
-Son tres servicios. El LLM y los embeddings son externos (API de OpenAI); la voz corre **dentro** del backend.
+Son tres servicios. El LLM, los embeddings y la voz son externos (API de OpenAI).
 
 > ⚠️ **Requiere `OPENAI_API_KEY`** en `.env` para el chat. Sin key, la app levanta igual: catálogo, carrito, checkout, órdenes y voz funcionan, y el chat muestra "Asistente no disponible: falta configurar OPENAI_API_KEY". Los tests no necesitan key (usan `FakeLLM`).
 > ⚠️ **nginx y SSE:** desactivar el buffering (`proxy_buffering off`) en la ruta `/api/chat/stream`, o servir la API directo en `:8000` (más simple).
@@ -275,7 +276,7 @@ services:
     ports: ["8000:8000"]
     volumes:
       - ./data:/app/data:ro
-      - models_cache:/root/.cache      # modelo de whisper (se baja una vez)
+      # (el volumen models_cache quedó sin uso: embeddings y voz van por la API)
 
   frontend:
     build: { context: ./frontend, args: { VITE_API_URL: "${VITE_API_URL}" } }
@@ -328,10 +329,11 @@ EMBEDDING_DIM=1536                # tiene que coincidir con VECTOR(n) de la migr
 EMBEDDING_BATCH_SIZE=100
 EMBEDDING_USD_PER_1M_TOKENS=0.02  # solo para estimar el costo en el reporte
 
-# STT
-STT_PROVIDER=faster_whisper
-STT_MODEL=small
+# STT (OpenAI API; sin OPENAI_API_KEY, /api/transcribe responde 503)
+STT_PROVIDER=openai              # openai | fake (tests)
+STT_MODEL=gpt-4o-transcribe
 STT_LANGUAGE=es
+STT_MAX_BYTES=2000000            # ~2 MB: sobra para 30 s de webm/opus
 
 # Frontend
 VITE_API_URL=http://localhost:8000
@@ -814,20 +816,31 @@ sequenceDiagram
   participant U as Usuario
   participant FE as Frontend
   participant BE as /api/transcribe
-  participant W as faster-whisper
+  participant O as OpenAI (gpt-4o-transcribe)
   U->>FE: mantiene apretado 🎤
-  FE->>FE: MediaRecorder (webm/opus)
+  FE->>FE: MediaRecorder (webm/opus), corta a los 30 s
   U->>FE: suelta
-  FE->>BE: POST audio
-  BE->>W: transcribe(language=es)
-  W-->>BE: texto
-  BE-->>FE: {text}
+  FE->>BE: POST audio (multipart, con token)
+  BE->>BE: valida formato, tamaño y mínimo
+  BE->>O: transcribe(language=es, prompt=vocabulario del catálogo)
+  O-->>BE: texto
+  BE-->>FE: {text, model}
   FE->>FE: texto en el input (editable)
-  U->>FE: Enviar → mismo flujo que texto
+  U->>FE: Enviar → POST /api/chat, el mismo flujo que el texto
 ```
-- Modelo `small` (o `base`) en `int8` sobre CPU, cargado una sola vez y cacheado en un volumen.
-- El texto se **edita antes de enviar**.
-- Casos límite: micrófono denegado, audio vacío o muy corto, más de 30 s, formato inválido, falla de transcripción.
+- **La voz es solo otra forma de escribir:** `/api/transcribe` no habla con el agente. El usuario **edita el texto antes de enviarlo**, así que una mala transcripción nunca termina en una acción.
+- **Decisión (v5):** API de OpenAI en lugar de faster-whisper local (ver la fila STT en §4). Interfaz `Transcriber` (`app/stt/transcriber.py`) con `OpenAITranscriber` y `FakeTranscriber`: volver a un modelo local sería otra clase y otro `STT_PROVIDER`.
+- **`prompt` con el vocabulario del catálogo**, leído de la DB: "MercaNova", las 20 marcas y las líneas de producto (Sound, Air, Quiet, Vision…). Sin las líneas, "Nimbus Sound 691" salía como "Nimbuson 691"; con ellas, sale perfecto.
+- **Validaciones del backend:** formato (webm, ogg, mp4/m4a, mp3, wav; se ignora `;codecs=…`), tamaño máximo `STT_MAX_BYTES` (2 MB), mínimo 1 KB, transcripción vacía → `NO_SPEECH`. **El límite de 30 s lo aplica la UI** cortando la grabación: medir la duración en el backend exigiría decodificar el audio (ffmpeg), y el tamaño ya acota lo mismo.
+- **Pruebas reales (08/11),** con voces sintéticas de macOS en español de México, porque no había micrófono:
+
+  | Frase | `gpt-4o-mini-transcribe` | **`gpt-4o-transcribe`** | `gpt-transcribe` |
+  |---|---|---|---|
+  | "…videollamadas, máximo doscientos dólares. ¿Tienen los Nimbus Sound 691?" | ✅ (con el vocabulario) | ✅ | ✅ |
+  | "Agregá dos Vector Air 690… compará el Orbit Sound 458 con el Quanta Quiet 638" | "Agregar los…", "OrbitZone", "KantaKit" | **"Agregá dos… compará el Orbit Sound 458 con el Kanta Quiet 638"** | "Padre A2…", "Kairo Keys" |
+
+  Latencia ~0,8–1,6 s por audio de 10 s en los tres. Se eligió **`gpt-4o-transcribe`**: el mejor en voseo y nombres de producto, a ~USD 0,006/min (~USD 0,001 por mensaje). `whisper-1` rechazó el m4a de macOS (400). Una primera prueba con una voz que no era la de español daba "100 dólares" en vez de 200: era la voz, no el modelo.
+- **Pendiente para la UI (N12):** botón 🎤, `MediaRecorder`, corte a los 30 s, permiso de micrófono denegado y el texto editable en el input.
 
 ---
 
@@ -856,7 +869,7 @@ sequenceDiagram
 | GET | `/api/conversations?limit=&offset=` | ✔ | Las conversaciones del usuario, por última actividad, con `message_count` y vista previa del último mensaje. **No hay `POST`:** `POST /api/chat` sin `conversation_id` crea la conversación (botón "Nueva conversación" = mandar `null`) |
 | GET | `/api/conversations/{id}/messages` | ✔ | Rehidratar el chat: mensajes en orden; los del asistente traen `response` (`type`, `product_ids` para las tarjetas, `suggested_replies`) y `tools` (paso, tool, argumentos, error, latencia) para el panel "ver tools usadas". La de otro usuario → 404 |
 | POST | `/api/chat/stream` | ✔ | `{conversation_id, message}` → SSE |
-| POST | `/api/transcribe` | ✔ | Audio multipart → `{text}` |
+| POST | `/api/transcribe` | ✔ | Audio multipart (`file`: webm, ogg, mp4/m4a, mp3, wav; ≤ `STT_MAX_BYTES`) → `{text, model}`. **No habla con el agente:** el texto va al input y se manda a `/api/chat`. Errores: 415 `UNSUPPORTED_AUDIO`, 413 `AUDIO_TOO_LARGE`, 422 `AUDIO_TOO_SHORT` / `NO_SPEECH` / `INVALID_AUDIO`, 503 `STT_DISABLED` |
 | GET | `/api/health` | — | DB, LLM y STT |
 
 `Authorization: Bearer <token>`. El catálogo es público; carrito, órdenes y chat requieren login.
@@ -1221,7 +1234,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | 🟡 loop + `POST /api/chat` + 9 tools: `search_products`, `get_product`, `get_related_products`, `compare_products` y las 5 de carrito (§10.9.1); faltan `get_orders`, `get_order` y `start_checkout` (dependen de N6) |
 | N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B | 🟡 casi todo ✅: pipeline de 3 etapas, retry transitorio del LLM (SDK), fallbacks honestos, las 6 stop conditions (incluida confirmación humana), historial y tool results recortados, IDs validados contra tools + DB, tarjetas desde `/api/products?ids=`, ninguna tool compra, quitar/vaciar con confirmación. Falta: retry ante errores transitorios de la DB |
 | N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ⬜ |
-| N12 | Voz (faster-whisper + botón 🎤) | RF-08 | B + C | ⬜ |
+| N12 | Voz (faster-whisper + botón 🎤) | RF-08 | B + C | 🟡 backend ✅ (`POST /api/transcribe` con la API de OpenAI, §11); falta el botón 🎤 en la UI |
 | N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | 🟡 dominio ✅, API ✅, agente con FakeLLM ✅ (260 tests); faltan transacción de compra y concurrencia (N6) |
 | N14 | `AGENTS.md` + 2 skills | §17 | Todos | ✅ `AGENTS.md` + `CLAUDE.md` + 3 skills (`testing`, `mercanova-review`, `add-agent-tool`) + evidencia en `docs/evidence/` |
 

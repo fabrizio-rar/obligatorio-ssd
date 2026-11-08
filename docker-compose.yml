@@ -27,10 +27,8 @@ services:
     volumes:
       - ./data:/app/data:ro
       - ./reports:/app/reports
-      - models_cache:/root/.cache # embedding and whisper models (downloaded once)
 
   # frontend: added in a later step (N1, frontend part)
 
 volumes:
   pgdata: {}
-  models_cache: {}
