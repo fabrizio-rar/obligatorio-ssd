@@ -26,4 +26,5 @@ def health(db: Annotated[Session, Depends(get_db)], response: Response) -> dict:
         "status": "ok" if db_status == "ok" else "degraded",
         "db": db_status,
         "chat_enabled": get_settings().chat_enabled,
+        "stt_enabled": get_settings().openai_configured or get_settings().stt_provider == "fake",
     }

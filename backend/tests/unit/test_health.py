@@ -34,8 +34,6 @@ def test_health_ok():
 def test_health_reports_db_down():
     response = _client(fail=True).get("/api/health")
     assert response.status_code == 503
-    assert response.json() == {
-        "status": "degraded",
-        "db": "unavailable",
-        "chat_enabled": response.json()["chat_enabled"],
-    }
+    body = response.json()
+    assert (body["status"], body["db"]) == ("degraded", "unavailable")
+    assert isinstance(body["chat_enabled"], bool) and isinstance(body["stt_enabled"], bool)

@@ -21,7 +21,8 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [~] Auth (N3) y catálogo (N4): backend listo (`/api/auth/*`, `/api/products`, `/api/products/{id}`, `/api/categories`, `/api/warehouses`); falta la UI
 - [~] Carrito (N5): backend + tools del agente listos (`domain/cart.py`, `/api/cart*`, `get_cart`/`add_to_cart`/`update_cart_item`/`remove_from_cart`/`clear_cart`); falta la UI
 - [x] `AGENTS.md` + skills (N14): `testing`, `mercanova-review`, `add-agent-tool`
-- [ ] Resto del núcleo (N6, N7, N10–N13): ver `docs/PLAN.md` §20.1
+- [~] Voz (N12): backend listo (`POST /api/transcribe`); falta el botón 🎤 en la UI
+- [ ] Resto del núcleo (N6, N7, N10, N11, N13): ver `docs/PLAN.md` §20.1
 
 > Cuando se complete un ítem del núcleo, actualizá esta checklist **y** la columna "Estado" de `docs/PLAN.md` §20.1 en el mismo cambio.
 
@@ -42,7 +43,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 | Frontend | React + Vite + TypeScript + shadcn/ui (Tailwind) + TanStack Query |
 | LLM | **OpenAI `gpt-6-luna`** vía **Responses API** (SDK `openai`, async), detrás de la interfaz `LLMProvider` (`docs/PLAN.md` §10.0) |
 | Embeddings | **OpenAI `text-embedding-3-small`** (1536 dims) detrás de la interfaz `Embedder`; un vector por producto. Sin key se saltea y la búsqueda cae a full-text (`docs/PLAN.md` §9.3) |
-| Voz | faster-whisper local |
+| Voz | **API de OpenAI** (`gpt-4o-transcribe`) detrás de la interfaz `Transcriber`; solo transcribe, el texto va a `/api/chat` (`docs/PLAN.md` §11) |
 | Tests | pytest (backend). Sin E2E |
 | Infra | Docker Compose: `db`, `backend`, `frontend`. El LLM es externo (API de OpenAI) |
 

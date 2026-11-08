@@ -27,7 +27,6 @@ services:
     volumes:
       - ./data:/app/data:ro
       - ./reports:/app/reports
-      - models_cache:/root/.cache # embedding and whisper models (downloaded once)
 
   frontend:
     build: ./frontend
@@ -45,4 +44,3 @@ services:
 
 volumes:
   pgdata: {}
-  models_cache: {}

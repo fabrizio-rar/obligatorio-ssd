@@ -98,6 +98,7 @@ Para seguir una conversación, mandá el `conversation_id` que devolvió la resp
 | Catálogo | `GET /api/products` (`?category=`, `?page=`, `?ids=a,b`), `GET /api/products/{id}`, `GET /api/products/compare?ids=`, `GET /api/categories`, `GET /api/warehouses` | — |
 | Carrito | `GET /api/cart`, `POST /api/cart/items`, `PATCH /api/cart/items/{id}`, `DELETE /api/cart/items/{id}`, `DELETE /api/cart` | ✔ |
 | Asistente | `POST /api/chat`, `GET /api/conversations`, `GET /api/conversations/{id}/messages` | ✔ |
+| Voz | `POST /api/transcribe` (multipart `file`: webm, ogg, mp4/m4a, mp3, wav) → `{text}`; el texto se manda después a `/api/chat` | ✔ |
 
 Los errores siempre tienen el formato `{"ok": false, "error": {"code", "message", "details"}}`.
 

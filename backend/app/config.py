@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 60
     llm_max_retries: int = 2  # retries on 429 / 5xx / timeout (with backoff, by the SDK)
 
+    # Speech to text (docs/PLAN.md §11): OpenAI transcription API
+    stt_provider: Literal["openai", "fake"] = "openai"
+    stt_model: str = "gpt-4o-transcribe"  # best in our tests (PLAN §11); ~USD 0.001 per message
+    stt_language: str = "es"
+    stt_max_bytes: int = Field(default=2_000_000, gt=0)
+
     # Agent loop limits (docs/PLAN.md §10.7.3)
     agent_max_steps: int = Field(default=6, ge=1)
     agent_history_messages: int = Field(default=10, ge=0)
