@@ -3,6 +3,7 @@
 > Documento de diseño previo a la implementación del **Obligatorio 2 de Sistemas de Soporte de Decisión** (ORT, 2026). Grupo de **3 integrantes**.
 > Las marcas **🟡 A DISCUTIR** indican decisiones abiertas. Están todas juntas en [21. Preguntas abiertas](#21-preguntas-abiertas).
 > **v2:** se incorporó el análisis del dataset real (`MercaNova_dataset_obligatorio_2.xlsx`) y se definieron login simple, loop propio (sin LangGraph), streaming, shadcn/ui y testing sin E2E.
+> **v3:** el LLM es **OpenAI `gpt-6-luna`** por API (Responses API). Ollama sale del stack. Embeddings y voz siguen locales.
 
 ---
 
@@ -18,8 +19,8 @@
 | Ingesta | Script idempotente: las **8 hojas** del Excel → validación → tablas SQL normalizadas → embeddings |
 | Búsqueda | **Híbrida**: filtros SQL (categoría, precio, uso recomendado, stock) + vectorial + full-text, fusionadas con RRF |
 | Chunking | **1 documento por producto** (las descripciones tienen 170–280 caracteres), sin precio ni stock |
-| Embeddings | Modelo local **multilingüe**: el catálogo está **en inglés** y el usuario habla **en español** |
-| LLM | Detrás de una interfaz `LLMProvider`. 🟡 Ollama local (`qwen3:8b`) o API barata, según el profesor |
+| Embeddings | Modelo local **multilingüe** con `fastembed` dentro del backend: el catálogo está **en inglés** y el usuario habla **en español** |
+| LLM | **OpenAI `gpt-6-luna`** vía **Responses API** (function calling + structured outputs), detrás de una interfaz `LLMProvider`. ~USD 0,002 por turno |
 | Orquestación | **Loop propio** (sin LangGraph): un agente con tools para la conversación y un **workflow** para la compra |
 | Control de acciones | El LLM **no puede comprar**. Solo un botón de la UI confirma, vía un endpoint transaccional |
 | Anti-alucinación | Structured output con `product_ids`; las tarjetas se renderizan **desde la DB**; se valida la salida |
@@ -137,6 +138,8 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 | ORM | SQLAlchemy 2 + Alembic | SQL crudo, SQLModel | Transacciones explícitas, `FOR UPDATE`, migraciones versionadas |
 | DB | **Postgres + pgvector** | SQLite + Chroma | Un solo motor: filtros y similitud en una query, y un servicio menos. Chroma (lo de clase) queda como alternativa documentada |
 | Frontend | **React + Vite + TS + shadcn/ui** | Next.js, MUI | SPA sin SSR. shadcn da componentes accesibles (Card, Dialog, Sheet, Table, Form) que se copian al repo y se modifican. TanStack Query sincroniza el carrito entre el chat y la UI |
+| LLM | **OpenAI `gpt-6-luna`** (API) | Ollama local (`qwen3:8b`, `llama3.1:8b`), Claude Haiku 5.5, GPT-6.1 Terra | Ver §10.0 |
+| Embeddings | **fastembed** + `multilingual-e5-large` (local, dentro del backend) | OpenAI embeddings, `bge-m3` vía Ollama | Sin costo ni dependencia de red para indexar; un servicio menos. Ver §9.3 |
 | Orquestación | **Loop propio** + `LLMProvider` | LangGraph, LangChain | Ver §10.1 |
 | STT | **faster-whisper** | Web Speech API, Whisper API | Gratis, offline, reproducible y testeable |
 | Auth | Usuario y contraseña + token opaco | JWT, OAuth | Lo mínimo que pide la clase ("registro e inicio de sesión simples"). Un token en la DB permite logout real sin manejar firmas |
@@ -180,7 +183,7 @@ mercanova/
 │   │   │   ├── embeddings.py
 │   │   │   └── search.py
 │   │   ├── agent/
-│   │   │   ├── llm/                # LLMProvider + adaptador elegido + FakeLLM
+│   │   │   ├── llm/                # LLMProvider + OpenAIResponsesProvider + FakeLLM
 │   │   │   ├── tools.py
 │   │   │   ├── prompts/system.md
 │   │   │   ├── response_schema.py
@@ -222,11 +225,12 @@ mercanova/
 | Servicio | Imagen | Puerto | Responsabilidad |
 |---|---|---|---|
 | `db` | `pgvector/pgvector:pg16` | 5432 | Datos y vectores |
-| `backend` | build `./backend` | 8000 | API, auth, agente, ingesta, STT |
+| `backend` | build `./backend` | 8000 | API, auth, agente (llama a la API de OpenAI), ingesta, embeddings, STT |
 | `frontend` | build `./frontend` (build de Vite servido con nginx) | 5173 → 80 | SPA |
-| `ollama` *(profile `local-llm`)* | `ollama/ollama` | 11434 | LLM y/o embeddings locales, **opcional** |
 
-> ⚠️ **Mac:** Docker en macOS no usa la GPU de Apple, así que Ollama en un container corre solo con CPU (lento). Para desarrollar: Ollama **nativo** + `LLM_BASE_URL=http://host.docker.internal:11434`. El servicio `ollama` queda para Linux/Windows.
+Son tres servicios. El LLM es externo (API de OpenAI); embeddings y voz corren **dentro** del backend.
+
+> ⚠️ **Requiere `OPENAI_API_KEY`** en `.env` para el chat. Sin key, la app levanta igual: catálogo, carrito, checkout, órdenes y voz funcionan, y el chat muestra "Asistente no disponible: falta configurar OPENAI_API_KEY". Los tests no necesitan key (usan `FakeLLM`).
 > ⚠️ **nginx y SSE:** desactivar el buffering (`proxy_buffering off`) en la ruta `/api/chat/stream`, o servir la API directo en `:8000` (más simple).
 
 ### 6.2 `docker-compose.yml` (borrador)
@@ -252,26 +256,19 @@ services:
     ports: ["8000:8000"]
     volumes:
       - ./data:/app/data:ro
-      - models_cache:/root/.cache
-    extra_hosts: ["host.docker.internal:host-gateway"]
+      - models_cache:/root/.cache      # modelos de embeddings y whisper (se bajan una vez)
 
   frontend:
     build: { context: ./frontend, args: { VITE_API_URL: "${VITE_API_URL}" } }
     depends_on: [backend]
     ports: ["5173:80"]
 
-  ollama:
-    image: ollama/ollama
-    profiles: ["local-llm"]
-    volumes: [ollama:/root/.ollama]
-    ports: ["11434:11434"]
-
-volumes: { pgdata: {}, models_cache: {}, ollama: {} }
+volumes: { pgdata: {}, models_cache: {} }
 ```
 
 ```bash
-cp .env.example .env
-docker compose up --build        # + --profile local-llm para Ollama en Docker
+cp .env.example .env             # completar OPENAI_API_KEY
+docker compose up --build
 # http://localhost:5173  (usuario demo: demo / demo1234, creado por el seed)
 ```
 
@@ -287,11 +284,11 @@ DATABASE_URL=postgresql+psycopg://mercanova:change-me@db:5432/mercanova
 AUTH_TOKEN_TTL_HOURS=72
 SEED_DEMO_USER=true
 
-# LLM (🟡 proveedor a definir con el profesor)
-LLM_PROVIDER=ollama              # ollama | openai | anthropic
-LLM_MODEL=qwen3:8b
-LLM_BASE_URL=http://host.docker.internal:11434
-LLM_API_KEY=
+# LLM: OpenAI (Responses API)
+OPENAI_API_KEY=                  # requerida para el chat; NUNCA commitear
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-6-luna
+LLM_REASONING_EFFORT=low         # none | low | medium | high: low para chat (latencia y costo)
 LLM_TIMEOUT_SECONDS=60
 AGENT_MAX_STEPS=6
 AGENT_HISTORY_MESSAGES=10
@@ -300,7 +297,7 @@ AGENT_MAX_TOKENS_PER_TURN=12000
 LLM_MAX_RETRIES=2
 
 # Embeddings
-EMBEDDING_PROVIDER=fastembed     # fastembed | ollama
+EMBEDDING_PROVIDER=fastembed
 EMBEDDING_MODEL=intfloat/multilingual-e5-large
 EMBEDDING_DIM=1024
 
@@ -437,8 +434,8 @@ Tags: audio; headphones; over-ear; music; calls; commuting
 
 ### 9.3 Embeddings
 - **Multilingüe, obligatorio:** el buscador de la UI recibe texto en español y lo compara contra documentos en inglés.
-- **Propuesta:** `fastembed` dentro del backend con `intfloat/multilingual-e5-large` (1024 dims). No depende de Ollama ni de una API. Usa los prefijos `query:` y `passage:` propios de e5.
-  - Alternativa: `bge-m3` vía Ollama, si el LLM también corre en Ollama.
+- **Decisión:** `fastembed` dentro del backend con `intfloat/multilingual-e5-large` (1024 dims). Usa los prefijos `query:` y `passage:` propios de e5.
+  - Por qué local aunque tengamos key de OpenAI: indexar y buscar desde el catálogo no cuesta nada ni depende de la red, el buscador de la UI sigue andando sin key y no suma otro proveedor.
   - 🟡 Medir latencia en CPU; si es lento, `multilingual-e5-small` (384 dims).
 - Interfaz `Embedder.embed_documents()` / `embed_query()`, con modelo y dimensión por env var.
 - 360 productos → la indexación completa tarda segundos o pocos minutos en CPU, y una sola vez.
@@ -473,6 +470,35 @@ Salida: `[{product_id, sku, name, brand, category, subcategory, current_price, l
 ---
 
 ## 10. Arquitectura de IA
+
+### 10.0 Modelo: OpenAI `gpt-6-luna`
+| | Valor |
+|---|---|
+| Modelo | `gpt-6-luna` (por env var `LLM_MODEL`) |
+| API | **Responses API**: es donde OpenAI soporta function calling para este modelo. En Chat Completions solo funciona con `reasoning effort = none` |
+| Capacidades usadas | Function calling (tools con `strict: true`) + **structured outputs** (JSON schema de `AgentResponse`) |
+| Reasoning effort | `low` por defecto (`LLM_REASONING_EFFORT`): menos latencia y menos tokens para un chat. Se compara con `medium` en las evals |
+| Precio | USD 0,10 / 1M tokens de entrada, USD 0,50 / 1M de salida → ~USD 0,002 por turno; todo el proyecto ~USD 2–5 |
+| SDK | `openai` (Python), cliente async |
+
+**Por qué este modelo (para la sección de decisiones del PDF):**
+- **Alternativas:**
+  - Ollama local (`qwen3:8b`): lo que recomendó la cátedra; gratis, pero menos confiable en conversaciones de varios pasos y lento sin GPU en Docker en Mac;
+  - Claude Haiku 5.5: mismo precio;
+  - GPT-6.1 Terra: unas 10 veces más caro.
+- **Decisión:** `gpt-6-luna`. Es el más barato con tool calling y structured outputs nativos; con ~USD 5 cubrimos desarrollo, evals y video. Una sola key cubre todo lo del LLM.
+- **Trade-offs:**
+  - el costo corre por nuestra cuenta (lo aceptó el docente: "si usan API, es a costo propio");
+  - depende de la red y de un proveedor externo;
+  - el docente necesita **su propia key** para probar el chat.
+
+  Se mitiga con la degradación controlada (§6.1), los tests sin key y la interfaz `LLMProvider`, que permite volver a un modelo local cambiando un adaptador (trabajo futuro).
+
+**Detalles de integración:**
+- Configurar **límite de gasto** en la cuenta de OpenAI.
+- Parsear el structured output desde el **item de salida correspondiente**, no desde `output_text`: hay reportes de que `gpt-6-luna` a veces agrega un item de mensaje extra. Si no valida → retry de formato (§10.7.3).
+- Registrar `usage` (tokens de entrada y salida) por llamada: alimenta el presupuesto por turno y el costo que se muestra en las evals.
+- Errores de la API: `429` y `5xx` → retry con backoff (transitorios); `401` (key inválida) → error irrecuperable con mensaje claro; `400` → bug nuestro, se loguea y hay fallback.
 
 ### 10.1 ¿LangGraph? No: loop propio
 | | LangGraph | Loop propio |
@@ -522,7 +548,7 @@ flowchart LR
 ```
 
 ### 10.4 Tools
-Principios: pocas, con nombres y descripciones claros; parámetros tipados con Pydantic (con **enums** para categorías y usos); validación antes de ejecutar; errores devueltos como resultado. **El `user_id` nunca es parámetro de una tool**: lo inyecta el backend desde el token, así el modelo no puede operar sobre el carrito de otro usuario.
+Principios: pocas, con nombres y descripciones claros; parámetros tipados con Pydantic (con **enums** para categorías y usos); validación antes de ejecutar; errores devueltos como resultado. Las tools se declaran con **`strict: true`** en la Responses API: el JSON schema sale del modelo Pydantic, con `additionalProperties: false`, y los parámetros opcionales se declaran como *required + nullable*, que es lo que exige el modo estricto. La validación Pydantic del backend se mantiene igual (defensa en profundidad). **El `user_id` nunca es parámetro de una tool**: lo inyecta el backend desde el token, así el modelo no puede operar sobre el carrito de otro usuario.
 
 | Tool | Parámetros | Devuelve | Efecto |
 |---|---|---|---|
@@ -592,7 +618,7 @@ El state **no se manda entero** al modelo. Se manda un resumen de 2–3 líneas 
 - Los tool results se **recortan** antes de volver al modelo: top 5 productos y solo los campos útiles (id, nombre, precio, stock, 3–4 specs relevantes, `recommended_for`). La ficha completa queda para la UI.
 - El historial va acotado a los últimos N mensajes; los turnos viejos sobreviven a través de `constraints` y `shown_products`.
 - Las instrucciones por tarea pueden cargarse solo cuando hacen falta (skills de la app, §10.10).
-- Objetivo: menos tokens, menos latencia y menos ruido, lo que importa doble con un modelo local chico.
+- Objetivo: menos tokens (menos costo con la API), menos latencia y menos ruido.
 
 ### 10.6 Structured output (respuesta final del turno)
 ```python
@@ -1016,7 +1042,8 @@ La letra pide *"una estrategia de testing adecuada a la arquitectura elegida y c
   turns: ["Agregá el primero al carrito", "dale compralo"]
   expect: { tool_called: start_checkout, message_not_contains: ["compra realizada", "orden confirmada"] }
 ```
-**Reporte:** % de casos que pasan por categoría, latencia por turno y tools por turno. Va al PDF y sirve para justificar la elección de modelo.
+**Reporte:** % de casos que pasan por categoría, latencia por turno, tools por turno, **tokens y costo en USD por corrida**. Va al PDF y respalda la elección de `gpt-6-luna` y del `reasoning effort` (`low` vs `medium`).
+**Costo:** cada corrida completa de evals cuesta centavos con `gpt-6-luna`; se corren a mano, nunca en CI.
 🟡 CI opcional: GitHub Actions con `ruff` + `pytest` (sin evals).
 
 ---
@@ -1066,7 +1093,7 @@ Formato: **Problema → Alternativas → Decisión → Justificación → Trade-
 9e. Contexto acotado, estado de ejecución vs estado de negocio, y no implementar memoria
 10. Structured output + render desde la DB + guardrails
 11. Streaming de eventos de progreso vs streaming de tokens
-12. Modelo local vs API (🟡) → respaldado por la tabla de evals
+12. LLM: OpenAI `gpt-6-luna` por API vs modelo local (§10.0) → respaldado por la tabla de evals
 13. faster-whisper local
 14. Login simple con token opaco vs JWT
 15. Sin reserva de stock en el carrito; validación al confirmar
@@ -1096,7 +1123,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 
 | Semana | A | B | C |
 |---|---|---|---|
-| 1 (03–09/11) | N2 esquema + ingesta + reporte | Prueba rápida del LLM + elegir embeddings | N1 monorepo + compose + shadcn + login UI |
+| 1 (03–09/11) | N2 esquema + ingesta + reporte | Cuenta de OpenAI + límite de gasto + prueba rápida de `gpt-6-luna` con tools falsas + medir los embeddings | N1 monorepo + compose + shadcn + login UI |
 | 2 (10–16/11) | N3 auth, N5 carrito, API + tests | N8 búsqueda + tests | N4 catálogo, detalle, carrito UI |
 | 3 (17–23/11) | N6 checkout transaccional + N7 órdenes + N13 concurrencia | N9 agente + N10 guardrails | N6/N7 UI + N11 ChatPanel |
 | **23/11** | **🏁 Hito: el núcleo compra de punta a punta** | | |
@@ -1150,18 +1177,19 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 ## 21. Preguntas abiertas
 
 **Para el profesor**
-1. **Modelo:** ¿API paga aceptable o 100% local con Ollama? ¿Está bien Ollama nativo en el host (GPU en Mac) con el servicio Docker como alternativa?
-2. **Video:** ¿~5 minutos (letra) o hasta 15 (clase)?
+1. **Video:** ¿~5 minutos (letra) o hasta 15 (clase)?
 
 **Entre nosotros**
-3. Embeddings: `fastembed` + `multilingual-e5-large` (propuesta) o `bge-m3` vía Ollama. Depende de la pregunta 1 y de la latencia en CPU.
-4. ¿`spec_filters` en `search_products` (fase 2)? (§9.5)
-5. ¿Skills de la aplicación? (§10.10)
-6. ¿Streaming token a token si sobra tiempo? (§10.8)
-7. ¿Validación de montos en el texto del mensaje? (§10.7)
-8. ¿CI con GitHub Actions?
+2. Embeddings: `multilingual-e5-large` o `-small` según la latencia en CPU (§9.3).
+3. ¿`spec_filters` en `search_products` (fase 2)? (§9.5)
+4. ¿Skills de la aplicación? (§10.10)
+5. ¿Streaming token a token si sobra tiempo? (§10.8)
+6. ¿Validación de montos en el texto del mensaje? (§10.7)
+7. ¿CI con GitHub Actions?
+8. ¿Cómo prueba el docente el chat? ¿Usa su propia key, o le pasamos una key con límite de gasto **por fuera del repo**? (Nunca en el PDF ni en el código.)
 
 **Ya decidido:**
+- **LLM: OpenAI `gpt-6-luna`** por Responses API (§10.0). Embeddings y voz locales. Sin Ollama.
 - Envío a domicilio **y** retiro en sucursal (§12.2), con `order_item_allocations`.
 - Niveles de control de acciones con Deshacer y confirmación para quitar o vaciar (§10.4.1).
 - Checkout precargado desde el chat (§10.4.1). Prioridad: semana 4.
@@ -1176,9 +1204,10 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 
 | Riesgo | Impacto | Mitigación |
 |---|---|---|
-| El modelo local es débil en conversaciones de varios pasos | Alto | Enums en las tools, query en inglés, state compacto, guardrails, evals y proveedor intercambiable |
+| `gpt-6-luna` es un modelo chico: puede fallar en conversaciones de varios pasos | Medio | Enums en las tools, query en inglés, state compacto, guardrails, evals; si no alcanza, probar `reasoning effort = medium` |
+| Dependencia de la API de OpenAI (red, caída, key inválida, costo) | Medio | Degradación controlada (el resto de la app funciona), retry ante 429/5xx, límite de gasto, tests con `FakeLLM` |
+| El docente no tiene key para probar el chat | Medio | README claro, mensaje explícito en la UI, video que muestra el chat funcionando; 🟡 pregunta 8 |
 | Desajuste de idioma (catálogo en inglés, usuario en español) | Medio | Embeddings multilingües, query en inglés y evals en español |
-| Ollama lento en Docker en Mac | Medio | Ollama nativo |
 | Que se vendan productos inactivos o sin stock | Alto | Filtro `active` en SQL + validación en la transacción + tests |
 | Defensas en medio del desarrollo | Medio | Este documento como guía de estudio |
 | El docente no logra levantar el proyecto | Alto | README de 3 pasos, healthchecks, ingesta automática, prueba desde un clone limpio |

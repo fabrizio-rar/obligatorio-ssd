@@ -35,11 +35,11 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 | Backend | Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic v2 |
 | DB | PostgreSQL 16 + pgvector |
 | Frontend | React + Vite + TypeScript + shadcn/ui (Tailwind) + TanStack Query |
-| LLM | Detrás de la interfaz `LLMProvider`, configurable por env var. Modelo final pendiente (`docs/PLAN.md` §21); se desarrolla con Ollama local |
-| Embeddings | Modelo local multilingüe (el catálogo está en inglés y los usuarios hablan español) |
+| LLM | **OpenAI `gpt-6-luna`** vía **Responses API** (SDK `openai`, async), detrás de la interfaz `LLMProvider` (`docs/PLAN.md` §10.0) |
+| Embeddings | Locales con `fastembed` + `multilingual-e5-large`, dentro del backend (el catálogo está en inglés y los usuarios hablan español) |
 | Voz | faster-whisper local |
 | Tests | pytest (backend). Sin E2E |
-| Infra | Docker Compose: `db`, `backend`, `frontend` (+ `ollama` opcional con el profile `local-llm`) |
+| Infra | Docker Compose: `db`, `backend`, `frontend`. El LLM es externo (API de OpenAI) |
 
 ## Estructura del repositorio (objetivo)
 
@@ -66,12 +66,12 @@ docs/                  # PLAN.md, diagramas, capturas, informe
 > Se completan a medida que exista el código. **No inventes comandos que todavía no existen.**
 
 ```bash
-cp .env.example .env
+cp .env.example .env                               # completar OPENAI_API_KEY
 docker compose up --build                          # levantar todo
 docker compose exec backend alembic upgrade head   # migraciones
 docker compose exec backend python -m scripts.ingest [--reset]
 docker compose exec backend pytest                 # tests (sin evals)
-docker compose exec backend python -m scripts.run_evals   # evals contra el LLM real
+docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-luna (gasta créditos: correr a mano)
 ```
 
 ---
@@ -93,10 +93,18 @@ docker compose exec backend python -m scripts.run_evals   # evals contra el LLM 
 9. **Toda compra va en una transacción** que revalida **precio, stock y producto activo** antes de ejecutar. O se hace todo o nada.
 10. **Stock por sucursal:** el envío asigna stock con un greedy entre sucursales; el retiro usa solo la sucursal elegida. Se descuenta `on_hand_qty` (`available_qty` es una columna generada).
 11. **Structured output:** el agente devuelve `AgentResponse` con `product_ids`. El frontend renderiza las tarjetas pidiendo los datos a la API, nunca desde el texto del modelo.
+12. **Integración con OpenAI** (`docs/PLAN.md` §10.0):
+    - **Responses API**, no Chat Completions: es donde `gpt-6-luna` soporta function calling.
+    - Tools con `strict: true`, con el schema generado desde Pydantic.
+    - El structured output se parsea desde el **item de salida correspondiente**, no desde `output_text`. Si no valida → retry de formato.
+    - `429` / `5xx` / timeout → retry con backoff. `401` → error irrecuperable con mensaje claro. Se registra `usage` en cada llamada.
+    - **Sin `OPENAI_API_KEY`, la app tiene que levantar igual:** solo el chat queda deshabilitado, con un mensaje.
+    - **El código del agente no importa `openai` directamente:** solo el adaptador en `agent/llm/`.
 
 ## Configuración y seguridad
 
-- **Nada hardcodeado:** API keys, URLs, **nombres de modelos**, límites del agente y credenciales de la DB van en variables de entorno (`app/config.py` con pydantic-settings).
+- **Nada hardcodeado:** `OPENAI_API_KEY`, URLs, **nombres de modelos** (`LLM_MODEL=gpt-6-luna`), `LLM_REASONING_EFFORT`, límites del agente y credenciales de la DB van en variables de entorno (`app/config.py` con pydantic-settings).
+- **La key de OpenAI es personal y cuesta plata:** nunca en código, logs, PDF, capturas ni mensajes de commit. Cada uno usa la suya o la del equipo, con límite de gasto configurado.
 - Toda variable nueva se agrega a **`.env.example`** con un comentario.
 - **Nunca commitear `.env`**, secretos ni datos de tarjeta. El pago es un enum simulado.
 - Las contraseñas se guardan con hash bcrypt.
@@ -114,7 +122,7 @@ docker compose exec backend python -m scripts.run_evals   # evals contra el LLM 
 ## Testing
 
 - **Todo cambio de dominio o de transacción viene con su test.** Cubrir también los casos de error, no solo el caso feliz.
-- Los tests **no llaman al LLM real**: se usa `FakeLLM` con respuestas guionadas. Las evals (`tests/evals/`) son las únicas que usan el modelo real y no forman parte de `pytest`.
+- Los tests **no llaman a OpenAI**: se usa `FakeLLM` con respuestas guionadas, así `pytest` corre sin key y sin gastar. Las evals (`tests/evals/`) son las únicas que usan `gpt-6-luna`, no forman parte de `pytest` y se corren a mano (gastan créditos).
 - Los tests de integración usan un **Postgres real** (pgvector), no SQLite.
 - Antes de dar algo por terminado: `pytest` en verde y `ruff` sin errores.
 
