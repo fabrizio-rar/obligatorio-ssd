@@ -12,6 +12,7 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -19,6 +20,9 @@ from sqlalchemy.orm import Session
 
 from app.agent.llm.base import ToolCall, ToolSpec
 from app.agent.llm.schema import strict_json_schema
+from app.agent.response_schema import PendingAction, UiAction
+from app.domain import cart
+from app.domain.cart import CartView
 from app.domain.catalog import (
     ProductDetail,
     ProductStatus,
@@ -39,11 +43,15 @@ from app.retrieval.vocabulary import (
 
 @dataclass
 class ToolContext:
-    """What tools can use. There is no user_id here on purpose: when user tools arrive,
-    the backend injects it from the token, never the model (AGENTS.md rule 4)."""
+    """What tools can use. `user_id` comes from the session token: it is NEVER a tool
+    parameter, so the model cannot touch someone else's cart (AGENTS.md rule 4)."""
 
     session: Session
     embedder: Embedder | None
+    user_id: int
+    # Products that came back from a tool in this conversation (the loop keeps it updated).
+    # Level-2 actions only accept these: the model cannot add an ID it made up.
+    seen_product_ids: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -54,6 +62,8 @@ class ToolExecution:
     latency_ms: int
     arguments: dict[str, Any] | None = None  # parsed arguments, for the logs
     product_ids: list[str] = field(default_factory=list)  # products the model has now "seen"
+    ui_actions: list[UiAction] = field(default_factory=list)
+    pending_confirmation: PendingAction | None = None  # set -> the turn stops here
 
 
 @dataclass(frozen=True)
@@ -63,6 +73,9 @@ class ToolOutcome:
 
     result: dict[str, Any]
     product_ids: list[str] = field(default_factory=list)
+    # Filled by the backend from what the tool did, never by the model (§10.6)
+    ui_actions: list[UiAction] = field(default_factory=list)
+    pending_confirmation: PendingAction | None = None
 
 
 # --- search_products ------------------------------------------------------------------------
@@ -230,6 +243,141 @@ def _get_product(ctx: ToolContext, args: GetProductArgs) -> ToolOutcome:
     return ToolOutcome(data, seen)
 
 
+# --- Cart tools (docs/PLAN.md §10.4.1: level 1 read, level 2 reversible, level 3 confirm) --
+
+
+def _money(amount: Decimal) -> str:
+    return f"USD {amount}"
+
+
+def _cart_for_model(view: CartView) -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "product_id": i.product_id,
+                "name": i.name,
+                "sku": i.sku,
+                "quantity": i.quantity,
+                "unit_price": _money(i.unit_price),
+                "line_total": _money(i.line_total),
+                "stock": i.available,
+                "issues": i.issues,
+            }
+            for i in view.items
+        ],
+        "item_count": view.item_count,
+        "total": _money(view.total),
+        "can_checkout": view.can_checkout,
+    }
+
+
+def _cart_ids(view: CartView) -> list[str]:
+    return [i.product_id for i in view.items if i.active]
+
+
+class NoArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class CartItemArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str = Field(description="Product ID from a previous tool result.")
+    quantity: int = Field(
+        description=f"Units, 1-{cart.MAX_QUANTITY_PER_ITEM}. Use 1 if the user did not say."
+    )
+
+
+class ProductRefArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str = Field(description="Product ID of an item in the cart.")
+
+
+def _get_cart(ctx: ToolContext, _args: NoArgs) -> ToolOutcome:
+    view = cart.get_cart(ctx.session, ctx.user_id)
+    return ToolOutcome({"ok": True, "cart": _cart_for_model(view)}, _cart_ids(view))
+
+
+def _require_seen(ctx: ToolContext, product_id: str) -> None:
+    if product_id not in ctx.seen_product_ids:
+        raise DomainError(
+            "UNKNOWN_PRODUCT_REFERENCE",
+            f"{product_id} did not come from any tool result in this conversation",
+            {"hint": "Look the product up first with get_product or search_products"},
+        )
+
+
+def _add_to_cart(ctx: ToolContext, args: CartItemArgs) -> ToolOutcome:
+    _require_seen(ctx, args.product_id)
+    view = cart.add_item(ctx.session, ctx.user_id, args.product_id, args.quantity)
+    data = {
+        "ok": True,
+        "action": "added",
+        "product_id": args.product_id,
+        "quantity_added": args.quantity,
+        "cart": _cart_for_model(view),
+    }
+    return ToolOutcome(data, _cart_ids(view), ui_actions=["refresh_cart"])
+
+
+def _update_cart_item(ctx: ToolContext, args: CartItemArgs) -> ToolOutcome:
+    in_cart = {i.product_id for i in cart.get_cart(ctx.session, ctx.user_id).items}
+    if args.product_id not in in_cart:
+        _require_seen(ctx, args.product_id)  # gives the clearer error if it was made up
+    view = cart.set_quantity(ctx.session, ctx.user_id, args.product_id, args.quantity)
+    data = {"ok": True, "action": "updated", "cart": _cart_for_model(view)}
+    return ToolOutcome(data, _cart_ids(view), ui_actions=["refresh_cart"])
+
+
+def _remove_from_cart(ctx: ToolContext, args: ProductRefArgs) -> ToolOutcome:
+    """Level 3: does NOT execute. The user confirms on screen."""
+    view = cart.get_cart(ctx.session, ctx.user_id)
+    item = next((i for i in view.items if i.product_id == args.product_id), None)
+    if item is None:
+        raise DomainError(
+            "NOT_IN_CART", "Ese producto no está en el carrito", {"product_id": args.product_id}
+        )
+    summary = (
+        f"¿Querés quitar {item.name} × {item.quantity} ({_money(item.line_total)}) del carrito? "
+        f"El total pasaría a {_money(view.total - item.line_total)}. Confirmalo en la tarjeta."
+    )
+    pending = PendingAction(action="remove_item", product_id=item.product_id, summary=summary)
+    data = {"ok": True, "confirmation_required": True, "action": "remove_item", "summary": summary}
+    return ToolOutcome(data, [item.product_id], pending_confirmation=pending)
+
+
+def _clear_cart(ctx: ToolContext, _args: NoArgs) -> ToolOutcome:
+    """Level 3: does NOT execute. The user confirms on screen."""
+    view = cart.get_cart(ctx.session, ctx.user_id)
+    if not view.items:
+        return ToolOutcome({"ok": True, "already_empty": True, "cart": _cart_for_model(view)})
+    products = len(view.items)
+    summary = (
+        f"¿Querés vaciar el carrito? Tiene {products} "
+        f"{'producto' if products == 1 else 'productos'} ({view.item_count} "
+        f"{'unidad' if view.item_count == 1 else 'unidades'}) por {_money(view.total)}. "
+        "Confirmalo en la tarjeta."
+    )
+    pending = PendingAction(action="clear_cart", product_id=None, summary=summary)
+    data = {"ok": True, "confirmation_required": True, "action": "clear_cart", "summary": summary}
+    return ToolOutcome(data, pending_confirmation=pending)
+
+
+CART_DESCRIPTIONS = {
+    "get_cart": "The user's cart now: items, quantities, CURRENT prices, stock issues, total. "
+    "Use it before talking about the cart. Never describe the cart from memory.",
+    "add_to_cart": "Add a product to the user's cart (sums if it is already there). ONLY when "
+    "the product is unambiguous (one specific product from a tool result) and the quantity is "
+    "explicit or 1. If not, ask first.",
+    "update_cart_item": "Change the quantity of a product already in the cart (1 or more). "
+    "To remove it, use remove_from_cart.",
+    "remove_from_cart": "Ask to remove a product from the cart. It does NOT remove it: the user "
+    "confirms on screen.",
+    "clear_cart": "Ask to empty the cart. It does NOT empty it: the user confirms on screen.",
+}
+
+
 # --- Registry ---------------------------------------------------------------------------------
 
 
@@ -248,6 +396,16 @@ TOOLS: dict[str, Tool] = {
     "get_product": Tool(
         "get_product", GetProductArgs, lambda _session: GET_PRODUCT_DESCRIPTION, _get_product
     ),
+    **{
+        name: Tool(name, args, lambda _session, n=name: CART_DESCRIPTIONS[n], run)
+        for name, args, run in [
+            ("get_cart", NoArgs, _get_cart),
+            ("add_to_cart", CartItemArgs, _add_to_cart),
+            ("update_cart_item", CartItemArgs, _update_cart_item),
+            ("remove_from_cart", ProductRefArgs, _remove_from_cart),
+            ("clear_cart", NoArgs, _clear_cart),
+        ]
+    },
 }
 
 
@@ -279,7 +437,7 @@ def execute_tool(ctx: ToolContext, call: ToolCall) -> ToolExecution:
     def done(
         result: dict[str, Any],
         arguments: dict[str, Any] | None = None,
-        product_ids: list[str] | None = None,
+        outcome: ToolOutcome | None = None,
     ) -> ToolExecution:
         return ToolExecution(
             call=call,
@@ -287,7 +445,9 @@ def execute_tool(ctx: ToolContext, call: ToolCall) -> ToolExecution:
             is_error=not result.get("ok", False),
             latency_ms=int((time.monotonic() - started) * 1000),
             arguments=arguments,
-            product_ids=product_ids or [],
+            product_ids=outcome.product_ids if outcome else [],
+            ui_actions=outcome.ui_actions if outcome else [],
+            pending_confirmation=outcome.pending_confirmation if outcome else None,
         )
 
     tool = TOOLS.get(call.name)
@@ -309,7 +469,7 @@ def execute_tool(ctx: ToolContext, call: ToolCall) -> ToolExecution:
     # Stages 2 and 3 (inside the tool): business rules, then execution
     try:
         outcome = tool.run(ctx, args)
-        return done(outcome.result, raw, outcome.product_ids)
+        return done(outcome.result, raw, outcome)
     except ValidationError as error:
         return done(
             _error("INVALID_ARGUMENTS", "Invalid arguments", _validation_details(error)), raw

@@ -120,7 +120,9 @@ async def chat_turn(
         max_tokens=settings.agent_max_tokens_per_turn,
     )
     try:
-        turn = await run_turn(llm, ToolContext(session, embedder), limits, history, message, state)
+        turn = await run_turn(
+            llm, ToolContext(session, embedder, user_id=user_id), limits, history, message, state
+        )
         meta = TurnMeta(
             steps=turn.steps,
             stop_reason=turn.stop_reason,

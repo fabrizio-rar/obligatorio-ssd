@@ -61,8 +61,14 @@ def _recommend_from_search(request) -> LLMResult:
     return final(_answer([p["product_id"] for p in products]))
 
 
+def _owner(db: Session) -> int:
+    """The user that owns the conversations of these tests (the token gives it in the API)."""
+    user = db.scalar(select(User).where(User.username == "agent_tester"))
+    return (user or auth.register(db, "agent_tester", "secret123")).id
+
+
 def _run(db, llm, state=None, history=(), text="busco auriculares", limits=LIMITS):
-    ctx = ToolContext(db, EMBEDDER)
+    ctx = ToolContext(db, EMBEDDER, user_id=_owner(db))
     return asyncio.run(run_turn(llm, ctx, limits, list(history), text, state or AgentState()))
 
 
@@ -88,7 +94,15 @@ def test_search_then_recommend(db):
 
     first, second = llm.requests
     assert first["input_messages"][-1] == {"role": "user", "content": "busco auriculares"}
-    assert [t.name for t in first["tools"]] == ["search_products", "get_product"]
+    assert [t.name for t in first["tools"]] == [
+        "search_products",
+        "get_product",
+        "get_cart",
+        "add_to_cart",
+        "update_cart_item",
+        "remove_from_cart",
+        "clear_cart",
+    ]
     assert "calls -> " in first["tools"][0].description  # use cases per category
     # Second step: only the tool output, chained to the previous response
     assert second["input_messages"] is None
@@ -310,16 +324,18 @@ def test_get_product_errors(db, arguments, code):
 def test_both_tools_are_offered(db):
     llm = FakeLLM([final(_answer(type_="info"))])
     _run(db, llm)
-    assert [t.name for t in llm.requests[0]["tools"]] == ["search_products", "get_product"]
+    assert [t.name for t in llm.requests[0]["tools"]] == [
+        "search_products",
+        "get_product",
+        "get_cart",
+        "add_to_cart",
+        "update_cart_item",
+        "remove_from_cart",
+        "clear_cart",
+    ]
 
 
 # --- Service: conversation persistence ----------------------------------------------------------
-
-
-def _owner(db: Session) -> int:
-    """The user that owns the conversations of these tests (the token gives it in the API)."""
-    user = db.scalar(select(User).where(User.username == "agent_tester"))
-    return (user or auth.register(db, "agent_tester", "secret123")).id
 
 
 def _chat_turn(db, *args, **kwargs):
