@@ -300,7 +300,7 @@ LLM_TIMEOUT_SECONDS=60
 AGENT_MAX_STEPS=6
 AGENT_HISTORY_MESSAGES=10
 AGENT_TURN_TIMEOUT_SECONDS=90
-AGENT_MAX_TOKENS_PER_TURN=12000
+AGENT_MAX_TOKENS_PER_TURN=30000      # subido de 12000 (08/11): con 7 tools, cada paso reenvía ~3k tokens de instrucciones y tools
 LLM_MAX_RETRIES=2
 
 # Embeddings (OpenAI API; sin OPENAI_API_KEY se saltea el indexado)
@@ -588,7 +588,7 @@ Principios: pocas, con nombres y descripciones claros; parámetros tipados con P
 | `compare_products` | `product_ids[2..4]` | Specs alineadas por atributo, precio, stock y rating | Lectura |
 | `get_related_products` | `product_id`, `relation_type` (`alternative_to` / `accessory_for` / `often_bought_with`) | Relacionados activos con stock | Lectura |
 | `get_cart` | — | Ítems, subtotales, total | Lectura |
-| `add_to_cart` | `product_id`, `quantity` | Carrito + `undo_token`, o error `OUT_OF_STOCK` / `NOT_FOUND` / `INACTIVE` | Escritura reversible (nivel 2) |
+| `add_to_cart` | `product_id`, `quantity` | Carrito + `undo_token` (🟡 E3), o error `OUT_OF_STOCK` / `NOT_FOUND` / `INACTIVE`. **Solo acepta un `product_id` que vino de un tool result** en la conversación (`UNKNOWN_PRODUCT_REFERENCE` si no) | Escritura reversible (nivel 2) |
 | `update_cart_item` | `product_id`, `quantity` (≥ 1) | Carrito + `undo_token` | Escritura reversible (nivel 2) |
 | `remove_from_cart` | `product_id` | `{confirmation_required: true, action}`: **no ejecuta** | Nivel 3: confirmación del usuario |
 | `clear_cart` | — | `{confirmation_required: true, action}`: **no ejecuta** | Nivel 3 |
@@ -666,6 +666,7 @@ class AgentResponse(BaseModel):
     undo_token: str | None = None                       # nivel 2
 ```
 El backend completa `pending_confirmation`, `checkout_prefill` y `undo_token` **a partir de los tool results**, no del texto del modelo.
+**Implementado como dos schemas (08/11):** `ModelResponse` es lo que escribe el modelo (`type`, `message`, `product_ids`, `clarifying_question`, `suggested_replies`) y es el único JSON schema que se le manda a OpenAI. `AgentResponse` (lo que devuelve la API) = `ModelResponse` + `ui_actions` + `pending_confirmation`, que **llena el backend** desde los `ToolOutcome`. Como esos campos no están en el schema del modelo (y `extra="forbid"`), el modelo no puede inventar una tarjeta de confirmación ni un "refrescá el carrito".
 El frontend pide los datos de las tarjetas a la API por ID. Precio y stock nunca salen del texto del LLM.
 
 ### 10.7 Guardrails, permisos y robustez
@@ -678,6 +679,8 @@ Cada llamada pasa por tres etapas, en este orden, dentro de `execute_tool()`:
 | **1. Schema y argumentos** | Que la tool exista; argumentos contra el modelo Pydantic (tipos, enums, rangos: `quantity ≥ 1`, `product_ids` entre 2 y 4) | `INVALID_ARGUMENTS` con el detalle → vuelve al modelo para que corrija. **No se reintenta a ciegas** |
 | **2. Autorización y reglas de negocio** | Usuario autenticado (el `user_id` viene del token); nivel de la tool (§10.4.1); producto existente y activo; stock suficiente; sucursal válida | `UNAUTHORIZED` / `NOT_FOUND` / `INACTIVE` / `OUT_OF_STOCK` / `CONFIRMATION_REQUIRED` → vuelve al modelo como dato para explicárselo al usuario |
 | **3. Ejecución** | Llamada al dominio, dentro de una transacción si escribe | Error transitorio → retry (abajo); error irrecuperable → stop |
+
+**Fallback honesto:** si el turno se corta (presupuesto, loop, formato) **después** de un cambio exitoso en el carrito, el mensaje lo dice ("Igual, ya hice cambios en tu carrito: revisalo") y `ui_actions` incluye `refresh_cart`: nunca se finge una acción, y tampoco se oculta una que sí ocurrió.
 
 **Principio:** nada de lo que diga el modelo o el usuario es verdad hasta que el harness lo verifica. Si el usuario dice "hay 10 unidades" o el modelo pasa `price: 0`, no importa: el precio no es parámetro de ninguna tool y el stock se lee de la DB.
 
@@ -702,7 +705,7 @@ Además, el agente **solo** ve los datos del usuario autenticado y ninguna tool 
 | | ⏱️ Presupuesto agotado: `AGENT_TURN_TIMEOUT_SECONDS` (por ejemplo 90) o `AGENT_MAX_TOKENS_PER_TURN` | Fallback |
 | | 🔁 Loop detectado: misma tool con los mismos argumentos 2 veces | Corte y fallback |
 | | ❌ Error irrecuperable (DB caída, error interno) | Evento `error` |
-| | 🙋 Hace falta confirmación humana (`CONFIRMATION_REQUIRED`, `start_checkout`) | Se devuelve la respuesta con la tarjeta o el checkout; el agente **no sigue** |
+| | 🙋 Hace falta confirmación humana (`CONFIRMATION_REQUIRED`, `start_checkout`) | Se devuelve la respuesta con la tarjeta o el checkout; el agente **no sigue**. **Implementado (08/11)** para `remove_from_cart` / `clear_cart`: el loop corta (`stop_reason: confirmation_required`) y el mensaje lo arma el backend con datos de la DB ("¿Querés quitar X × 2 (USD …)? El total pasaría a …"); el modelo no recibe otro paso y las tool calls siguientes del mismo paso no se ejecutan |
 
 El motivo de corte se guarda en `agent_state.last_turn.stop_reason` y en los logs.
 
@@ -774,6 +777,9 @@ async def run_turn(user, conversation_id, text) -> AsyncIterator[Event]:
 - **Probar:** `python -m scripts.chat --verbose "..." [--conversation <id>]` o `curl -X POST localhost:8000/api/chat -H 'Content-Type: application/json' -d '{"message": "..."}'`.
 - **Pruebas reales con `gpt-6-luna` (08/11):** auriculares ≤ 200 → 3 recomendaciones con la categoría y el precio correctos, y aclara que el catálogo no informa comodidad. "Quiero algo bueno" → aclaración sin buscar. Nimbus Sound 691 → "sin stock" y ofrece alternativas. Kairo Drive Pro 2TB → muestra los 2 SKU y pregunta. "El segundo" en el turno 3 → resuelve bien la referencia. Pedido de carrito → dice que todavía no puede, sin fingir. Off-topic e injection → vuelve al tema. ~5–10 s y ~USD 0,0007 por turno (4,5–7 mil tokens de entrada, sobre todo la descripción de la tool y los resultados).
 - **`get_product` (08/11, real):** Cedar Air 243 → "está discontinuado y ya no se vende" + ofrece alternativas de auriculares (antes sugería una tablet). "¿Lo retiro en Colonia?" (Vector Air 690) → "en Colonia no hay; Canelones 2, Maldonado 5, Este 6" (coincide con la DB). "¿Tiene ANC?" → "No, tiene aislamiento pasivo". Kairo Drive Pro 2TB → pregunta por SKU. A veces el modelo hace `search_products` antes de `get_product` para un nombre (un paso de más, ~11 mil tokens): ajustable en el prompt si las evals lo muestran.
+
+- **Tools de carrito (08/11):** `get_cart`, `add_to_cart`, `update_cart_item` (nivel 2, ejecutan) y `remove_from_cart`, `clear_cart` (nivel 3, **no ejecutan**). Llaman a `domain/cart.py`, igual que `/api/cart*`. `user_id` viene del token por `ToolContext` (nunca es parámetro). Pruebas reales con `gpt-6-luna`: "agregá los Vector Air 690" → `get_product` + `add_to_cart`; "agregá 2 más" → 3 unidades; "¿qué tengo?" → `get_cart`; "vaciá el carrito" → tarjeta de confirmación y el carrito **sigue lleno**; "sí, quitalo todo" por chat → vuelve a mostrar la tarjeta (no puede vaciar); "agregá ese" con 3 mostrados → pregunta cuál; "el segundo" → agrega el correcto; Cedar Air 243 → "discontinuado, no se puede agregar"; "agregá 8" → pregunta "¿Confirmás 8 unidades?" (hizo falta reforzar la regla de > 5 con un ejemplo en el prompt; la primera versión agregaba directo).
+- **Ajustes que salieron de las pruebas:** `AGENT_MAX_TOKENS_PER_TURN` 12000 → 30000 (un turno de 3–4 pasos con 7 tools gastaba ~13–19 mil tokens y cortaba por presupuesto después de agregar al carrito), y el fallback ahora avisa si el carrito cambió. A veces el modelo hace un `search_products` de más antes de `get_product` (más tokens, mismo resultado).
 
 ### 10.10 Skills de la aplicación (🟡 opcional)
 Markdown con instrucciones por tarea (`compare.md`, `checkout.md`, `clarify.md`) que se cargan solo cuando hacen falta. Mantienen corto el system prompt, lo que ayuda a un modelo chico, y suman el concepto de "Skills".
@@ -1184,11 +1190,11 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N2 | Ingesta de las 8 hojas + reporte | §8 | A | ✅ |
 | N3 | Login y register simples | — | A + C | 🟡 backend ✅ (token con hash, demo seed); falta la UI |
 | N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C | 🟡 backend ✅ (`/products`, detalle con relacionados, `/categories`, `/warehouses`); falta la UI |
-| N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C | 🟡 backend ✅ (`domain/cart.py` + `/api/cart*`, validación suave contra el stock total); faltan las tools del agente y la UI |
+| N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C | 🟡 backend ✅ (`domain/cart.py` + `/api/cart*`, validación suave contra el stock total) + tools del agente ✅; falta la UI |
 | N6 | Checkout con **envío y retiro** + modal de confirmación (acción, productos, cantidades, precios, total) + transacción con **revalidación de precio, stock y activo** + asignación por sucursal | RF-11..15 | A + C | ⬜ |
 | N7 | Historial de órdenes | RF-16 | A + C | ⬜ |
 | N8 | Búsqueda: filtros SQL + **vectorial** (embeddings multilingües) | RF-02 | B | ✅ `retrieval/search.py` (la tool la conecta N9) |
-| N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | 🟡 loop + `POST /api/chat` + `search_products` + `get_product` (§10.9.1); faltan `compare_products`, `get_related_products` y carrito/órdenes/checkout |
+| N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | 🟡 loop + `POST /api/chat` + `search_products`, `get_product` y las 5 de carrito (§10.9.1); faltan `compare_products`, `get_related_products` (plan en `docs/plans/`) y órdenes/checkout |
 | N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B | ⬜ |
 | N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ⬜ |
 | N12 | Voz (faster-whisper + botón 🎤) | RF-08 | B + C | ⬜ |

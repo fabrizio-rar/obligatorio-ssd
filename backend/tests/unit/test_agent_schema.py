@@ -2,7 +2,7 @@ import json
 
 from app.agent.guardrails import parse_response
 from app.agent.llm.schema import strict_json_schema
-from app.agent.response_schema import AgentResponse, fallback
+from app.agent.response_schema import AgentResponse, ModelResponse, fallback
 from app.agent.tools import SearchProductsArgs
 
 
@@ -18,7 +18,7 @@ def _objects(node):
 
 
 def test_strict_schemas_require_every_property_and_forbid_extras():
-    for model in (SearchProductsArgs, AgentResponse):
+    for model in (SearchProductsArgs, ModelResponse):
         schema = strict_json_schema(model)
         objects = list(_objects(schema))
         assert objects
@@ -70,3 +70,17 @@ def test_fallback_never_claims_an_action():
         assert response.type == "error"
         assert response.product_ids == []
         assert "compr" not in response.message.lower()
+
+
+def test_backend_only_fields_are_not_in_the_model_schema():
+    """The model cannot invent a confirmation card or a cart refresh."""
+    model_fields = set(strict_json_schema(ModelResponse)["properties"])
+    assert "pending_confirmation" not in model_fields
+    assert "ui_actions" not in model_fields
+    assert {"pending_confirmation", "ui_actions"} <= set(AgentResponse.model_fields)
+
+
+def test_model_cannot_smuggle_backend_fields():
+    text = json.dumps({**json.loads(_answer()), "ui_actions": ["refresh_cart"]})
+    response, error = parse_response([text])
+    assert response is None and "ui_actions" in error  # extra="forbid"

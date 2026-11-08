@@ -31,6 +31,11 @@ def _summarize(result: dict) -> object:
         return [p["name"] for p in result["products"]]
     if "product" in result:
         return f"{result['product']['name']} [{result['product']['status']}]"
+    if "cart" in result:
+        items = [f"{i['name']} x{i['quantity']}" for i in result["cart"]["items"]]
+        return f"{result.get('action', 'cart')}: {items} total={result['cart']['total']}"
+    if result.get("confirmation_required"):
+        return f"confirmation_required: {result['action']}"
     if "matches" in result:
         return [f"{m['name']} {m['sku']} [{m['status']}]" for m in result["matches"]]
     return result.get("error")
@@ -75,6 +80,13 @@ async def main(argv: list[str] | None = None) -> int:
         print(f"\n[{r.type}] {r.message}")
         if r.product_ids:
             print(f"  product_ids: {', '.join(r.product_ids)}")
+        if r.ui_actions:
+            print(f"  ui_actions: {r.ui_actions}")
+        if r.pending_confirmation:
+            pc = r.pending_confirmation
+            print(
+                f"  PENDING CONFIRMATION: {pc.action} {pc.product_id or ''} [Confirmar] [Cancelar]"
+            )
         if r.suggested_replies:
             print(f"  sugerencias: {' | '.join(r.suggested_replies)}")
         print(
@@ -88,7 +100,11 @@ async def main(argv: list[str] | None = None) -> int:
                 .order_by(ChatMessage.id.desc())
                 .limit(1)
             )
-            for log in session.scalars(select(ToolCallLog).where(ToolCallLog.message_id == last)):
+            for log in session.scalars(
+                select(ToolCallLog)
+                .where(ToolCallLog.message_id == last)
+                .order_by(ToolCallLog.step, ToolCallLog.id)
+            ):
                 print(f"  tool[{log.step}] {log.tool_name} {json.dumps(log.arguments)}")
                 print(f"     -> ok={not log.is_error} {_summarize(log.result)}")
     return 0

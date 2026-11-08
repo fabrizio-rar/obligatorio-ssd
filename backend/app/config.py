@@ -35,7 +35,8 @@ class Settings(BaseSettings):
     agent_max_steps: int = Field(default=6, ge=1)
     agent_history_messages: int = Field(default=10, ge=0)
     agent_turn_timeout_seconds: float = Field(default=90, gt=0)
-    agent_max_tokens_per_turn: int = Field(default=12000, gt=0)
+    # Each step resends the instructions + tool descriptions (~3k tokens): 3-4 steps fit
+    agent_max_tokens_per_turn: int = Field(default=30000, gt=0)
 
     # Embeddings (docs/PLAN.md §9.3)
     embedding_provider: Literal["openai", "fake"] = "openai"
