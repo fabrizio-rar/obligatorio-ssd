@@ -17,7 +17,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [~] Esqueleto del monorepo + Docker (N1): backend + db listos (`/api/health`); **falta el frontend**
 - [x] Ingesta del Excel (N2): 8 hojas + reporte en `reports/ingest_report.json`. Los embeddings (paso 5) se suman con N8 y el usuario demo (paso 6) con N3
 - [x] Búsqueda (N8): embeddings en `product_embeddings` (`scripts.index_embeddings`) + `retrieval/search.py` (filtros SQL + vectorial + usos como señal, RRF). La conecta al agente N9
-- [~] Agente (N9): loop + `POST /api/chat` (varios turnos, sin login ni streaming) + tool `search_products`. Faltan `get_product`, `compare_products`, `get_related_products` y las de carrito/órdenes/checkout (ver `docs/PLAN.md` §10.9.1)
+- [~] Agente (N9): loop + `POST /api/chat` (varios turnos, sin login ni streaming) + tools `search_products` y `get_product`. Faltan `compare_products`, `get_related_products` y las de carrito/órdenes/checkout (ver `docs/PLAN.md` §10.9.1)
 - [ ] Resto del núcleo (N3–N7, N10–N14): ver `docs/PLAN.md` §20.1
 
 > Cuando se complete un ítem del núcleo, actualizá esta checklist **y** la columna "Estado" de `docs/PLAN.md` §20.1 en el mismo cambio.

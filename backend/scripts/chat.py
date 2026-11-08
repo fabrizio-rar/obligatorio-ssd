@@ -25,6 +25,16 @@ from app.models import ChatMessage, ToolCallLog
 from app.retrieval.embeddings import get_embedder
 
 
+def _summarize(result: dict) -> object:
+    if "products" in result:
+        return [p["name"] for p in result["products"]]
+    if "product" in result:
+        return f"{result['product']['name']} [{result['product']['status']}]"
+    if "matches" in result:
+        return [f"{m['name']} {m['sku']} [{m['status']}]" for m in result["matches"]]
+    return result.get("error")
+
+
 async def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("message")
@@ -65,9 +75,8 @@ async def main(argv: list[str] | None = None) -> int:
                 .limit(1)
             )
             for log in session.scalars(select(ToolCallLog).where(ToolCallLog.message_id == last)):
-                found = [p["name"] for p in log.result.get("products", [])]
                 print(f"  tool[{log.step}] {log.tool_name} {json.dumps(log.arguments)}")
-                print(f"     -> ok={not log.is_error} {found or log.result.get('error')}")
+                print(f"     -> ok={not log.is_error} {_summarize(log.result)}")
     return 0
 
 

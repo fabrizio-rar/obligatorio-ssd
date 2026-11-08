@@ -8,7 +8,7 @@ Pure functions: no DB, no API.
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from app.domain.catalog import EMPTY_SPEC_VALUE
+from app.domain.catalog import EMPTY_SPEC_VALUE, format_number
 
 
 @dataclass(frozen=True)
@@ -37,11 +37,6 @@ class ProductText:
     not_recommended_for: list[str] = field(default_factory=list)
     specs: list[SpecText] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
-
-
-def format_number(value: Decimal) -> str:
-    """Decimal('22.000') -> '22', Decimal('0.500') -> '0.5'."""
-    return f"{value.normalize():f}"
 
 
 def format_spec(spec: SpecText) -> str | None:

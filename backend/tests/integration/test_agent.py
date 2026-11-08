@@ -86,7 +86,7 @@ def test_search_then_recommend(db):
 
     first, second = llm.requests
     assert first["input_messages"][-1] == {"role": "user", "content": "busco auriculares"}
-    assert [t.name for t in first["tools"]] == ["search_products"]
+    assert [t.name for t in first["tools"]] == ["search_products", "get_product"]
     assert "calls -> " in first["tools"][0].description  # use cases per category
     # Second step: only the tool output, chained to the previous response
     assert second["input_messages"] is None
@@ -221,6 +221,94 @@ def test_previous_products_are_summarized_in_the_instructions(db):
     _run(db, llm, AgentState(last_shown=list(ids), seen_product_ids=list(ids)))
     instructions = llm.requests[0]["instructions"]
     assert "1) " in instructions and ids[0] in instructions and ids[1] in instructions
+
+
+# --- get_product ------------------------------------------------------------------------------
+
+
+def _get(name=None, product_id=None):
+    return {"name": name, "product_id": product_id}
+
+
+def test_get_product_by_name_returns_full_sheet(db):
+    llm = FakeLLM(
+        [tool_call("get_product", _get(name="Vector Air 690")), final(_answer(type_="info"))]
+    )
+    turn = _run(db, llm, text="¿Lo puedo retirar en Colonia?")
+
+    execution = turn.tool_executions[0][1]
+    product = execution.result["product"]
+    assert product["status"] == "available"
+    assert product["price"].startswith("USD ")
+    colonia = next(w for w in product["stock_by_warehouse"] if w["warehouse_id"] == "WH-COL-001")
+    assert colonia["available"] == 0
+    assert "Active Noise Cancellation: No" in product["specs"]
+    assert execution.product_ids == [product["product_id"]]
+
+
+def test_discontinued_then_alternatives(db):
+    cedar = db.scalar(select(Product.id).where(Product.name == "Cedar Air 243"))
+
+    def answer(request):
+        alternatives = json.loads(request["tool_outputs"][0].output)["products"]
+        return final(
+            _answer(
+                [cedar, *[p["product_id"] for p in alternatives]],
+                message="Está discontinuado; te muestro alternativas",
+            )
+        )
+
+    llm = FakeLLM(
+        [
+            tool_call("get_product", _get(name="Cedar Air 243")),
+            tool_call("search_products", dict(SEARCH, query="headphones"), call_id="c2"),
+            answer,
+        ]
+    )
+    turn = _run(db, llm, text="Quiero los Cedar Air 243")
+
+    first = turn.tool_executions[0][1]
+    assert first.result["product"]["status"] == "discontinued"
+    assert "price" not in first.result["product"]
+    assert first.product_ids == []  # never becomes a card
+    assert cedar not in turn.response.product_ids
+    assert cedar in turn.dropped_product_ids
+    assert len(turn.response.product_ids) == 3  # the alternatives
+
+
+def test_get_product_duplicate_names_are_listed(db):
+    llm = FakeLLM(
+        [
+            tool_call("get_product", _get(name="Kairo Drive Pro 2TB")),
+            final(_answer(type_="clarification")),
+        ]
+    )
+    execution = _run(db, llm).tool_executions[0][1]
+    assert execution.result["ambiguous"] is True
+    assert len(execution.result["matches"]) == 2
+    assert len(execution.product_ids) == 2
+
+
+@pytest.mark.parametrize(
+    ("arguments", "code"),
+    [
+        (_get(), "INVALID_ARGUMENTS"),  # neither
+        (_get(name="Vector Air 690", product_id="MN-HDP-0004"), "INVALID_ARGUMENTS"),  # both
+        (_get(product_id="MN-XXX-0000"), "NOT_FOUND"),
+        (_get(name="Producto Inexistente 9000"), "NOT_FOUND"),
+    ],
+)
+def test_get_product_errors(db, arguments, code):
+    llm = FakeLLM([tool_call("get_product", arguments), final(_answer(type_="info"))])
+    execution = _run(db, llm).tool_executions[0][1]
+    assert execution.is_error
+    assert execution.result["error"]["code"] == code
+
+
+def test_both_tools_are_offered(db):
+    llm = FakeLLM([final(_answer(type_="info"))])
+    _run(db, llm)
+    assert [t.name for t in llm.requests[0]["tools"]] == ["search_products", "get_product"]
 
 
 # --- Service: conversation persistence ----------------------------------------------------------

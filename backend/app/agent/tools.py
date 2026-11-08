@@ -12,13 +12,19 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
 from app.agent.llm.base import ToolCall, ToolSpec
 from app.agent.llm.schema import strict_json_schema
+from app.domain.catalog import (
+    ProductDetail,
+    ProductStatus,
+    find_products_by_name,
+    get_product_detail,
+)
 from app.domain.errors import DomainError
 from app.retrieval.embeddings import Embedder
 from app.retrieval.search import SearchQuery, search
@@ -48,6 +54,15 @@ class ToolExecution:
     latency_ms: int
     arguments: dict[str, Any] | None = None  # parsed arguments, for the logs
     product_ids: list[str] = field(default_factory=list)  # products the model has now "seen"
+
+
+@dataclass(frozen=True)
+class ToolOutcome:
+    """What a tool returns: the (trimmed) result for the model, and the products the
+    answer is now allowed to show as cards. Each tool decides it explicitly."""
+
+    result: dict[str, Any]
+    product_ids: list[str] = field(default_factory=list)
 
 
 # --- search_products ------------------------------------------------------------------------
@@ -95,7 +110,7 @@ def _search_description(session: Session) -> str:
     )
 
 
-def _search_products(ctx: ToolContext, args: SearchProductsArgs) -> dict[str, Any]:
+def _search_products(ctx: ToolContext, args: SearchProductsArgs) -> ToolOutcome:
     # Stage 2: business rules (SearchQuery validates subcategory, price range, limits)
     query = SearchQuery(
         query=args.query,
@@ -111,7 +126,7 @@ def _search_products(ctx: ToolContext, args: SearchProductsArgs) -> dict[str, An
     )
     # Stage 3: execution
     result = search(ctx.session, query, ctx.embedder)
-    return {
+    data = {
         "ok": True,
         "total_candidates": result.total_candidates,
         "products": [
@@ -136,6 +151,83 @@ def _search_products(ctx: ToolContext, args: SearchProductsArgs) -> dict[str, An
             for h in result.hits
         ],
     }
+    return ToolOutcome(data, [h.product_id for h in result.hits])
+
+
+# --- get_product ------------------------------------------------------------------------------
+
+
+class GetProductArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str | None = Field(
+        description="Exact product ID (e.g. MN-HDP-0004), if it came from a previous tool result."
+    )
+    name: str | None = Field(
+        description="Product name as the user wrote it (e.g. 'Cedar Air 243'), when you do not "
+        "have its ID. Pass exactly one of product_id or name."
+    )
+
+    @model_validator(mode="after")
+    def exactly_one(self) -> Self:
+        if (self.product_id is None) == (self.name is None):
+            raise ValueError("pass exactly one of product_id or name")
+        return self
+
+
+GET_PRODUCT_DESCRIPTION = (
+    "Full sheet of ONE specific product: all specs, warranty, return days, dimensions, "
+    "CURRENT price and stock PER WAREHOUSE (for 'can I pick it up in Colonia?'). "
+    "Use it when the user names a product or asks about a specific one. "
+    "It also finds products that are no longer sold: status 'discontinued' (no price or "
+    "stock: do not offer it; offer to search alternatives in its category). "
+    "If several products share the name, it returns the matches so you can ask which one."
+)
+
+
+def _detail_for_model(detail: ProductDetail) -> dict[str, Any]:
+    data = detail.model_dump(mode="json", exclude_none=True)
+    if detail.status == ProductStatus.DISCONTINUED:
+        return data
+    data["price"] = f"{detail.currency} {detail.current_price}"
+    data["list_price"] = f"{detail.currency} {detail.list_price}"
+    for key in ("currency", "current_price"):
+        data.pop(key, None)
+    # Compact specs: "Battery Life: 28 h" (N/D kept: the model must not infer them)
+    data["specs"] = [f"{spec.name}: {spec.value}" for spec in detail.specs]
+    return data
+
+
+def _get_product(ctx: ToolContext, args: GetProductArgs) -> ToolOutcome:
+    if args.product_id is not None:
+        detail = get_product_detail(ctx.session, args.product_id.strip())
+    else:
+        matches = find_products_by_name(ctx.session, args.name)
+        if not matches:
+            raise DomainError(
+                "NOT_FOUND",
+                f"No product named '{args.name}'",
+                {"hint": "Try search_products to find similar products"},
+            )
+        if len(matches) > 1:
+            data = {
+                "ok": True,
+                "ambiguous": True,
+                "matches": [
+                    {
+                        **m.model_dump(exclude={"active"}),
+                        "status": "available" if m.active else "discontinued",
+                    }
+                    for m in matches
+                ],
+            }
+            return ToolOutcome(data, [m.product_id for m in matches if m.active])
+        detail = get_product_detail(ctx.session, matches[0].product_id)
+
+    data = {"ok": True, "product": _detail_for_model(detail)}
+    # A discontinued product can never become a card
+    seen = [] if detail.status == ProductStatus.DISCONTINUED else [detail.product_id]
+    return ToolOutcome(data, seen)
 
 
 # --- Registry ---------------------------------------------------------------------------------
@@ -146,12 +238,15 @@ class Tool:
     name: str
     args_model: type[BaseModel]
     describe: Callable[[Session], str]
-    run: Callable[[ToolContext, Any], dict[str, Any]]
+    run: Callable[[ToolContext, Any], ToolOutcome]
 
 
 TOOLS: dict[str, Tool] = {
     "search_products": Tool(
         "search_products", SearchProductsArgs, _search_description, _search_products
+    ),
+    "get_product": Tool(
+        "get_product", GetProductArgs, lambda _session: GET_PRODUCT_DESCRIPTION, _get_product
     ),
 }
 
@@ -181,15 +276,18 @@ def execute_tool(ctx: ToolContext, call: ToolCall) -> ToolExecution:
     propagate: they are irrecoverable and stop the turn."""
     started = time.monotonic()
 
-    def done(result: dict[str, Any], arguments: dict[str, Any] | None = None) -> ToolExecution:
-        ids = [p["product_id"] for p in result.get("products", [])]
+    def done(
+        result: dict[str, Any],
+        arguments: dict[str, Any] | None = None,
+        product_ids: list[str] | None = None,
+    ) -> ToolExecution:
         return ToolExecution(
             call=call,
             result=result,
             is_error=not result.get("ok", False),
             latency_ms=int((time.monotonic() - started) * 1000),
             arguments=arguments,
-            product_ids=ids,
+            product_ids=product_ids or [],
         )
 
     tool = TOOLS.get(call.name)
@@ -210,7 +308,8 @@ def execute_tool(ctx: ToolContext, call: ToolCall) -> ToolExecution:
 
     # Stages 2 and 3 (inside the tool): business rules, then execution
     try:
-        return done(tool.run(ctx, args), raw)
+        outcome = tool.run(ctx, args)
+        return done(outcome.result, raw, outcome.product_ids)
     except ValidationError as error:
         return done(
             _error("INVALID_ARGUMENTS", "Invalid arguments", _validation_details(error)), raw
