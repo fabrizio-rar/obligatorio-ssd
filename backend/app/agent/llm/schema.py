@@ -16,6 +16,11 @@ def _strict(node: Any) -> Any:
         if out.get("type") == "object" and "properties" in out:
             out["required"] = list(out["properties"])
             out["additionalProperties"] = False
+        if "$ref" in out and len(out) > 1:
+            # Strict mode rejects "$ref" with sibling keywords (e.g. a required enum field
+            # with a description): wrap it so the description is kept
+            ref = out.pop("$ref")
+            out["anyOf"] = [{"$ref": ref}]
         return out
     if isinstance(node, list):
         return [_strict(item) for item in node]

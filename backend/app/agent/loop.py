@@ -94,6 +94,7 @@ async def run_turn(
     seen = set(state.seen_product_ids)
     ctx.seen_product_ids = seen  # same set: tools see what the loop adds
     ui_actions: list[str] = []
+    comparison_ids: list[str] = []  # last successful compare_products of the turn
     signatures: set[str] = set()
     format_retried = False
 
@@ -105,8 +106,9 @@ async def run_turn(
     def finish(response: ModelResponse, reason: str) -> TurnResult:
         # The backend adds what the tools did (the model cannot set these fields)
         result.response = AgentResponse(
-            **response.model_dump(exclude={"ui_actions"}),
+            **response.model_dump(exclude={"ui_actions", "comparison_ids"}),
             ui_actions=list(dict.fromkeys(ui_actions)),
+            comparison_ids=comparison_ids if reason == "goal_reached" else [],
         )
         result.stop_reason = reason
         result.latency_ms = int((time.monotonic() - started) * 1000)
@@ -157,6 +159,8 @@ async def run_turn(
                 result.tool_executions.append((step, execution))
                 seen.update(execution.product_ids)
                 ui_actions.extend(execution.ui_actions)
+                if execution.comparison_ids:
+                    comparison_ids[:] = execution.comparison_ids
                 if execution.pending_confirmation is not None:
                     # Stop: human confirmation needed. Later calls of this step are not run.
                     pending = execution.pending_confirmation

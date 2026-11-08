@@ -86,7 +86,7 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 | `not_recommended_for` (59 productos: competitive gaming, air travel…) | Se usa para **excluir** y para explicar ("no lo recomiendo para viajar en avión") |
 | Specs EAV con 6–13 atributos por producto, y nombres distintos por categoría (ANC y Microphone en auriculares, Refresh Rate en monitores) | Tabla `product_specs` + vista para comparar. 🟡 Filtro opcional `spec_filters` validado contra los atributos de la categoría |
 | 37 specs con valor vacío (Water Resistance, Backlight) | Se cargan como "N/D", se reportan en la ingesta y **no se infieren** |
-| `Relations` | Tool `get_related_products`: **alternativas** cuando no hay stock y **accesorios** como venta cruzada |
+| `Relations` | Tool `get_related_products`: **alternativas** cuando no hay stock y **accesorios** como venta cruzada. Cada producto tiene **2 relaciones por tipo**; 91 de 720 alternativas apuntan a inactivos o sin stock (se filtran). En `accessory_for` el accesorio es `related_product_id`. **Relaciones raras del dataset** (no se corrigen): 60 "auriculares como accesorio de parlantes" y 60 "SSD externos como accesorio de routers" |
 | Precios: `current_price = list_price × (1 − discount)` (verificado); de USD 29 a USD 2019 | Se vende a `current_price` y la UI muestra el descuento tachado. El precio se congela en la orden |
 | `image_url` apunta a `placehold.co` (externo) | Fallback a un placeholder local si no hay internet |
 | No hay atributo de "comodidad" ni datos de clientes | El agente no puede afirmar "es cómodo". Se apoya en lo que existe (form factor, peso) y lo dice explícitamente (RF-18). Carrito, órdenes y usuarios los generamos nosotros |
@@ -585,8 +585,8 @@ Principios: pocas, con nombres y descripciones claros; parámetros tipados con P
 |---|---|---|---|
 | `search_products` | Ver §9.5 | Lista con precio y stock actuales | Lectura |
 | `get_product` | `product_id` **o** `name` (exactamente uno) | Ficha + specs + precio + stock total y **por sucursal** (responde "¿lo puedo retirar en Colonia?"). Por `name` encuentra también **inactivos** → `status: discontinued` sin precio ni stock; con nombres duplicados devuelve las coincidencias para desambiguar | Lectura |
-| `compare_products` | `product_ids[2..4]` | Specs alineadas por atributo, precio, stock y rating | Lectura |
-| `get_related_products` | `product_id`, `relation_type` (`alternative_to` / `accessory_for` / `often_bought_with`) | Relacionados activos con stock | Lectura |
+| `compare_products` | `product_ids[2..4]` | Specs alineadas por atributo, precio, stock y rating. **Misma categoría** (`MIXED_CATEGORIES` si no); filas con `differs` (primero las que difieren); "N/D" ≠ "No"; `values[i]` corresponde a `products[i]` (hay nombres repetidos). `domain/comparison.py`, igual que `GET /api/products/compare` | Lectura |
+| `get_related_products` | `product_id`, `relation_type` (`alternative_to` / `accessory_for` / `often_bought_with`), `in_stock_only` | Relacionados activos (y con stock), por `strength`, + `filtered_out` (cuántos se descartaron por inactivos / sin stock). `domain/catalog.py::get_related`, igual que el detalle de producto | Lectura |
 | `get_cart` | — | Ítems, subtotales, total | Lectura |
 | `add_to_cart` | `product_id`, `quantity` | Carrito + `undo_token` (🟡 E3), o error `OUT_OF_STOCK` / `NOT_FOUND` / `INACTIVE`. **Solo acepta un `product_id` que vino de un tool result** en la conversación (`UNKNOWN_PRODUCT_REFERENCE` si no) | Escritura reversible (nivel 2) |
 | `update_cart_item` | `product_id`, `quantity` (≥ 1) | Carrito + `undo_token` | Escritura reversible (nivel 2) |
@@ -666,6 +666,7 @@ class AgentResponse(BaseModel):
     undo_token: str | None = None                       # nivel 2
 ```
 El backend completa `pending_confirmation`, `checkout_prefill` y `undo_token` **a partir de los tool results**, no del texto del modelo.
+`comparison_ids` también lo llena el backend (los IDs del último `compare_products` exitoso del turno); `type` incluye `comparison`.
 **Implementado como dos schemas (08/11):** `ModelResponse` es lo que escribe el modelo (`type`, `message`, `product_ids`, `clarifying_question`, `suggested_replies`) y es el único JSON schema que se le manda a OpenAI. `AgentResponse` (lo que devuelve la API) = `ModelResponse` + `ui_actions` + `pending_confirmation`, que **llena el backend** desde los `ToolOutcome`. Como esos campos no están en el schema del modelo (y `extra="forbid"`), el modelo no puede inventar una tarjeta de confirmación ni un "refrescá el carrito".
 El frontend pide los datos de las tarjetas a la API por ID. Precio y stock nunca salen del texto del LLM.
 
@@ -781,6 +782,9 @@ async def run_turn(user, conversation_id, text) -> AsyncIterator[Event]:
 - **Tools de carrito (08/11):** `get_cart`, `add_to_cart`, `update_cart_item` (nivel 2, ejecutan) y `remove_from_cart`, `clear_cart` (nivel 3, **no ejecutan**). Llaman a `domain/cart.py`, igual que `/api/cart*`. `user_id` viene del token por `ToolContext` (nunca es parámetro). Pruebas reales con `gpt-6-luna`: "agregá los Vector Air 690" → `get_product` + `add_to_cart`; "agregá 2 más" → 3 unidades; "¿qué tengo?" → `get_cart`; "vaciá el carrito" → tarjeta de confirmación y el carrito **sigue lleno**; "sí, quitalo todo" por chat → vuelve a mostrar la tarjeta (no puede vaciar); "agregá ese" con 3 mostrados → pregunta cuál; "el segundo" → agrega el correcto; Cedar Air 243 → "discontinuado, no se puede agregar"; "agregá 8" → pregunta "¿Confirmás 8 unidades?" (hizo falta reforzar la regla de > 5 con un ejemplo en el prompt; la primera versión agregaba directo).
 - **Ajustes que salieron de las pruebas:** `AGENT_MAX_TOKENS_PER_TURN` 12000 → 30000 (un turno de 3–4 pasos con 7 tools gastaba ~13–19 mil tokens y cortaba por presupuesto después de agregar al carrito), y el fallback ahora avisa si el carrito cambió. A veces el modelo hace un `search_products` de más antes de `get_product` (más tokens, mismo resultado).
 
+- **`get_related_products` y `compare_products` (08/11, real):** "¿Tienen el Nimbus Sound 691?" → `get_product` (sin stock) + `alternative_to` → ofrece **Quanta Quiet 27** y Nimbus Air 753 (las curadas del dataset). "¿Cuál me conviene para viajar en avión, el Orbit 458 o el Quanta 638?" → `compare_products` → "para viajar, el Quanta: ANC, 45 h…; el Orbit es más barato pero no tiene ANC y el catálogo lo marca como no recomendado para avión" (no recita la tabla, no declara un ganador absoluto). Auriculares vs. laptop → explica que no se comparan. "¿Qué accesorios para esa laptop?" → `accessory_for` → las webcams curadas (hizo falta una regla explícita en "Which tool": la primera vez usó `search_products`).
+- **Bug encontrado solo con la API real:** OpenAI rechazó el schema de `get_related_products` (`$ref cannot have keywords {description}`): un enum **obligatorio** con descripción. `FakeLLM` no valida schemas, así que los tests no lo veían. Se arregló en `agent/llm/schema.py` (el `$ref` se envuelve en `anyOf`) y hay un test que recorre los schemas de **todas** las tools buscando ese patrón.
+
 ### 10.10 Skills de la aplicación (🟡 opcional)
 Markdown con instrucciones por tarea (`compare.md`, `checkout.md`, `clarify.md`) que se cargan solo cuando hacen falta. Mantienen corto el system prompt, lo que ayuda a un modelo chico, y suman el concepto de "Skills".
 
@@ -819,6 +823,7 @@ sequenceDiagram
 | GET | `/api/auth/me` | ✔ | |
 | GET | `/api/products?category=&page=&page_size=` | — | Catálogo paginado, **solo activos**. Sin `q` ni otros filtros: **la búsqueda es solo por chat** (§9.5); más filtros, si hacen falta, después |
 | GET | `/api/products/{id}` | — | Detalle + specs + stock por sucursal + `alternatives` / `accessories` / `often_bought_with` (activos y con stock). Inactivo → `status: discontinued`, sin precio ni stock, solo alternativas. Usa `domain/catalog.py`, igual que la tool `get_product` |
+| GET | `/api/products/compare?ids=a,b[,c,d]` | — | Tabla comparativa (2–4 productos de la misma categoría): la misma función que la tool `compare_products`. 422 `MIXED_CATEGORIES` / `INVALID_INPUT`, 409 `INACTIVE` |
 | GET | `/api/products?ids=a,b,c` | — | Para las tarjetas del chat (máx. 20, en el mismo orden; omite inactivos e inexistentes). No se combina con `category` |
 | GET | `/api/categories` | — | |
 | GET/POST/PATCH/DELETE | `/api/cart`, `/api/cart/items[/{product_id}]` | ✔ | Carrito. Cada mutación devuelve el carrito actualizado (`items` con precio y stock actuales, `item_count`, `total`, `can_checkout`). Errores: 404 `NOT_FOUND` / `NOT_IN_CART`, 409 `INACTIVE` / `OUT_OF_STOCK` (con `available` e `in_cart`), 422 cantidad inválida. 🟡 `undo_token` llega con E3 |
@@ -1194,7 +1199,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N6 | Checkout con **envío y retiro** + modal de confirmación (acción, productos, cantidades, precios, total) + transacción con **revalidación de precio, stock y activo** + asignación por sucursal | RF-11..15 | A + C | ⬜ |
 | N7 | Historial de órdenes | RF-16 | A + C | ⬜ |
 | N8 | Búsqueda: filtros SQL + **vectorial** (embeddings multilingües) | RF-02 | B | ✅ `retrieval/search.py` (la tool la conecta N9) |
-| N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | 🟡 loop + `POST /api/chat` + `search_products`, `get_product` y las 5 de carrito (§10.9.1); faltan `compare_products`, `get_related_products` (plan en `docs/plans/`) y órdenes/checkout |
+| N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | 🟡 loop + `POST /api/chat` + 9 tools: `search_products`, `get_product`, `get_related_products`, `compare_products` y las 5 de carrito (§10.9.1); faltan `get_orders`, `get_order` y `start_checkout` (dependen de N6) |
 | N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B | ⬜ |
 | N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ⬜ |
 | N12 | Voz (faster-whisper + botón 🎤) | RF-08 | B + C | ⬜ |

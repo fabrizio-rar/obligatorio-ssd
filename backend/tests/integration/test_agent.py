@@ -97,6 +97,8 @@ def test_search_then_recommend(db):
     assert [t.name for t in first["tools"]] == [
         "search_products",
         "get_product",
+        "get_related_products",
+        "compare_products",
         "get_cart",
         "add_to_cart",
         "update_cart_item",
@@ -327,6 +329,8 @@ def test_both_tools_are_offered(db):
     assert [t.name for t in llm.requests[0]["tools"]] == [
         "search_products",
         "get_product",
+        "get_related_products",
+        "compare_products",
         "get_cart",
         "add_to_cart",
         "update_cart_item",

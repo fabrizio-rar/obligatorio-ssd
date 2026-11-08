@@ -10,7 +10,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ResponseType = Literal["recommendation", "clarification", "info", "cart_update", "error"]
+ResponseType = Literal[
+    "recommendation", "comparison", "clarification", "info", "cart_update", "error"
+]
 UiAction = Literal["refresh_cart"]
 
 
@@ -21,7 +23,8 @@ class ModelResponse(BaseModel):
 
     type: ResponseType = Field(
         description=(
-            "recommendation: you recommend products; clarification: you need more info "
+            "recommendation: you recommend products; comparison: you compared products; "
+            "clarification: you need more info "
             "before acting; info: an answer without recommending; cart_update: you changed "
             "the cart; error: you could not help"
         )
@@ -51,6 +54,9 @@ class PendingAction(BaseModel):
 class AgentResponse(ModelResponse):
     ui_actions: list[UiAction] = Field(default_factory=list)
     pending_confirmation: PendingAction | None = None
+    # Products of the last compare_products in the turn: the UI draws the table with
+    # GET /api/products/compare?ids=...
+    comparison_ids: list[str] = Field(default_factory=list)
 
 
 FALLBACK_MESSAGES = {
