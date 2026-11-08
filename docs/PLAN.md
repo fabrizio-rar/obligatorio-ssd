@@ -871,7 +871,7 @@ sequenceDiagram
 | GET | `/api/conversations/{id}/messages` | ✔ | Rehidratar el chat: mensajes en orden; los del asistente traen `response` (`type`, `product_ids` para las tarjetas, `suggested_replies`) y `tools` (paso, tool, argumentos, error, latencia) para el panel "ver tools usadas". La de otro usuario → 404 |
 | POST | `/api/chat/stream` | ✔ | `{conversation_id, message}` → SSE |
 | POST | `/api/transcribe` | ✔ | Audio multipart (`file`: webm, ogg, mp4/m4a, mp3, wav; ≤ `STT_MAX_BYTES`) → `{text, model}`. **No habla con el agente:** el texto va al input y se manda a `/api/chat`. Errores: 415 `UNSUPPORTED_AUDIO`, 413 `AUDIO_TOO_LARGE`, 422 `AUDIO_TOO_SHORT` / `NO_SPEECH` / `INVALID_AUDIO`, 503 `STT_DISABLED` |
-| GET | `/api/health` | — | DB, LLM y STT |
+| GET | `/api/health` | — | `{status, db, chat_enabled, stt_enabled}`: 503 si la DB no responde; `chat_enabled` / `stt_enabled` dicen si hay `OPENAI_API_KEY` |
 
 `Authorization: Bearer <token>`. El catálogo es público; carrito, órdenes y chat requieren login.
 **Errores:** todo `DomainError` sale con `{"ok": false, "error": {code, message, details}}` desde un único handler (`api/errors.py`): 401 `UNAUTHORIZED` / `INVALID_CREDENTIALS` (mismo mensaje para usuario inexistente y contraseña mal), 404 `NOT_FOUND` / `CONVERSATION_NOT_FOUND` (la conversación de otro usuario también da 404), 409 `USERNAME_TAKEN`, 422 `INVALID_INPUT`.
