@@ -17,7 +17,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [~] Esqueleto del monorepo + Docker (N1): backend + db listos (`/api/health`); **falta el frontend**
 - [x] Ingesta del Excel (N2): 8 hojas + reporte en `reports/ingest_report.json`. Los embeddings (paso 5) se suman con N8 y el usuario demo (paso 6) con N3
 - [x] Búsqueda (N8): embeddings en `product_embeddings` (`scripts.index_embeddings`) + `retrieval/search.py` (filtros SQL + vectorial + usos como señal, RRF). La conecta al agente N9
-- [~] Agente (N9): loop + `POST /api/chat` (varios turnos, sin login ni streaming) + tools `search_products` y `get_product`. Faltan `compare_products`, `get_related_products` y las de carrito/órdenes/checkout (ver `docs/PLAN.md` §10.9.1)
+- [~] Agente (N9): loop + `POST /api/chat` (varios turnos, con login, sin streaming) + historial `GET /api/conversations` y `/{id}/messages` + tools `search_products` y `get_product`. Faltan `compare_products`, `get_related_products` y las de carrito/órdenes/checkout (ver `docs/PLAN.md` §10.9.1)
 - [~] Auth (N3) y catálogo (N4): backend listo (`/api/auth/*`, `/api/products`, `/api/products/{id}`, `/api/categories`, `/api/warehouses`); falta la UI
 - [~] Carrito (N5): backend listo (`domain/cart.py` + `/api/cart*`); faltan las tools del agente (`get_cart`, `add_to_cart`, `update_cart_item`, `remove`/`clear` con confirmación) y la UI
 - [ ] Resto del núcleo (N6, N7, N10–N14): ver `docs/PLAN.md` §20.1

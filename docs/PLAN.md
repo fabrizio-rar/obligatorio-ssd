@@ -824,15 +824,15 @@ sequenceDiagram
 | POST | `/api/orders/{id}/confirm` | ✔ | **Transacción de compra** |
 | POST | `/api/orders/{id}/cancel` | ✔ | |
 | GET | `/api/orders`, `/api/orders/{code}` | ✔ | Historial |
-| GET/POST | `/api/conversations` | ✔ | Listar y crear |
-| GET | `/api/conversations/{id}/messages` | ✔ | Rehidratar el chat |
+| GET | `/api/conversations?limit=&offset=` | ✔ | Las conversaciones del usuario, por última actividad, con `message_count` y vista previa del último mensaje. **No hay `POST`:** `POST /api/chat` sin `conversation_id` crea la conversación (botón "Nueva conversación" = mandar `null`) |
+| GET | `/api/conversations/{id}/messages` | ✔ | Rehidratar el chat: mensajes en orden; los del asistente traen `response` (`type`, `product_ids` para las tarjetas, `suggested_replies`) y `tools` (paso, tool, argumentos, error, latencia) para el panel "ver tools usadas". La de otro usuario → 404 |
 | POST | `/api/chat/stream` | ✔ | `{conversation_id, message}` → SSE |
 | POST | `/api/transcribe` | ✔ | Audio multipart → `{text}` |
 | GET | `/api/health` | — | DB, LLM y STT |
 
 `Authorization: Bearer <token>`. El catálogo es público; carrito, órdenes y chat requieren login.
 **Errores:** todo `DomainError` sale con `{"ok": false, "error": {code, message, details}}` desde un único handler (`api/errors.py`): 401 `UNAUTHORIZED` / `INVALID_CREDENTIALS` (mismo mensaje para usuario inexistente y contraseña mal), 404 `NOT_FOUND` / `CONVERSATION_NOT_FOUND` (la conversación de otro usuario también da 404), 409 `USERNAME_TAKEN`, 422 `INVALID_INPUT`.
-**Implementado (08/11):** carrito (`domain/cart.py` + `/api/cart*`), auth (`register`, `login`, `logout`, `me`), catálogo (`/products`, `/products/{id}`, `/products?ids=`, `/categories`, `/warehouses`) y `POST /api/chat` con login. Usuario `demo` / `demo1234` creado en el arranque (`scripts.seed_demo_user`).
+**Implementado (08/11):** historial de conversaciones (`agent/conversations.py` + `/api/conversations*`), carrito (`domain/cart.py` + `/api/cart*`), auth (`register`, `login`, `logout`, `me`), catálogo (`/products`, `/products/{id}`, `/products?ids=`, `/categories`, `/warehouses`) y `POST /api/chat` con login. Usuario `demo` / `demo1234` creado en el arranque (`scripts.seed_demo_user`).
 
 ### 12.1 Transacción de confirmación
 ```sql
