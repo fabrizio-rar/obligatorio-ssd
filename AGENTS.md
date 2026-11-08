@@ -61,15 +61,35 @@ frontend/src/          # components/ui (shadcn), api/, pages/, features/, i18n/
 docs/                  # PLAN.md, diagramas, capturas, informe
 ```
 
+## Primer arranque (clone nuevo)
+
+```bash
+cp .env.example .env          # OPENAI_API_KEY es opcional por ahora (solo la usa el chat)
+docker compose up --build
+```
+
+Eso alcanza para tener la base cargada. **No hace falta correr migraciones ni la ingesta a mano**: el `entrypoint.sh` del backend ejecuta en orden `alembic upgrade head` → `python -m scripts.ingest --if-empty` → `uvicorn`.
+
+- Verificar: `curl localhost:8000/api/health` → `{"status":"ok","db":"ok",...}`. Tiene que haber 360 filas en `products`.
+- La ingesta escribe `reports/ingest_report.json` (ignorado por git). Hallazgos esperados: 0 filas rechazadas, 17 inactivos, 22 sin stock, 3 nombres duplicados y 37 specs vacías ("N/D").
+- Los datos viven en el volumen `pgdata`: sobreviven a `docker compose down`. `docker compose down -v` borra la base, y el próximo `up` la vuelve a cargar.
+- Si cambian el Excel o el código de la ingesta, en vez de recrear la base, correr `python -m scripts.ingest` (ver "Comandos").
+
+**Conexión a la DB desde la máquina** (DBeaver, psql): `localhost:5433`, base `mercanova`, usuario `mercanova`, contraseña `POSTGRES_PASSWORD` del `.env`. El puerto es `5433` para no chocar con un Postgres local en `5432`, y se cambia con `POSTGRES_HOST_PORT`. La base `mercanova_test` es de los tests: se borra y se migra de cero en cada corrida, no usarla para mirar datos.
+
+**Problemas comunes:**
+- `port is already allocated` en el 5433 u 8000: otro proceso usa el puerto. Cambiar `POSTGRES_HOST_PORT` en `.env`, o liberar el 8000.
+- El backend se reinicia o sale con error: `docker compose logs backend`. Si no encuentra el dataset, revisar que exista `data/raw/MercaNova_dataset_obligatorio_2.xlsx`, que está versionado.
+
 ## Comandos
 
 > Se completan a medida que exista el código. **No inventes comandos que todavía no existen.**
 
 ```bash
 cp .env.example .env                               # completar OPENAI_API_KEY
-docker compose up --build                          # levantar todo
-docker compose exec backend alembic upgrade head   # migraciones
-docker compose exec backend python -m scripts.ingest [--reset]   # --reset también pisa el inventario
+docker compose up --build                          # levantar todo (migra e ingesta solo; ver "Primer arranque")
+docker compose exec backend alembic upgrade head   # migraciones (solo si agregás una nueva sin reiniciar)
+docker compose exec backend python -m scripts.ingest [--reset]   # re-ingesta manual; --reset también pisa el inventario
 docker compose exec backend pytest                 # tests (sin evals); los de integración usan TEST_DATABASE_URL
 docker compose exec backend ruff check . && docker compose exec backend ruff format --check .
 docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-luna (gasta créditos: correr a mano)
