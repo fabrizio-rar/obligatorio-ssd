@@ -2,7 +2,6 @@
 load conversation -> run the agent -> validate -> persist. Used by the API and the CLI."""
 
 import uuid
-from typing import Any
 
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -93,17 +92,21 @@ async def chat_turn(
     settings: Settings,
     message: str,
     conversation_id: uuid.UUID | None = None,
+    *,
+    user_id: int,
 ) -> ChatTurn:
     """Raises DomainError (CONVERSATION_NOT_FOUND) and LLMError (the model failed).
-    On any error nothing is saved: the turn is all or nothing."""
+    On any error nothing is saved: the turn is all or nothing.
+    `user_id` comes from the session token, never from the model."""
     if conversation_id is None:
-        conversation = Conversation(id=uuid.uuid4(), title=message[:TITLE_LENGTH])
+        conversation = Conversation(id=uuid.uuid4(), user_id=user_id, title=message[:TITLE_LENGTH])
         session.add(conversation)
         history: list[dict[str, str]] = []
         state = AgentState()
     else:
         conversation = session.get(Conversation, conversation_id)
-        if conversation is None:
+        # Someone else's conversation looks exactly like a missing one (no info leak)
+        if conversation is None or conversation.user_id != user_id:
             raise DomainError(
                 "CONVERSATION_NOT_FOUND", "Conversation not found", {"id": str(conversation_id)}
             )
@@ -133,7 +136,3 @@ async def chat_turn(
         session.rollback()
         raise
     return ChatTurn(conversation_id=conversation.id, response=turn.response, meta=meta)
-
-
-def error_body(code: str, message: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
-    return DomainError(code, message, details).to_dict()

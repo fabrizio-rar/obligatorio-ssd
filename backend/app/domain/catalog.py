@@ -20,10 +20,12 @@ from app.models import (
     Inventory,
     Price,
     Product,
+    ProductRelation,
     ProductSpec,
     Subcategory,
     Warehouse,
 )
+from app.models.catalog import product_availability
 
 # Value stored for a spec that has neither value_text nor value_number in the dataset.
 # It is shown as "N/D" and never inferred (docs/PLAN.md §2.1).
@@ -216,3 +218,230 @@ def get_product_detail(session: Session, product_id: str) -> ProductDetail:
         stock_by_warehouse=stock,
         specs=[_spec_value(s) for s in specs],
     )
+
+
+# --- Listing and cards (catalog page, chat cards) ---------------------------------------------
+
+MAX_PAGE_SIZE = 60
+MAX_CARD_IDS = 20
+
+
+class ProductCard(BaseModel):
+    """What a product card needs. Price and stock are read from the DB right now."""
+
+    product_id: str
+    sku: str
+    name: str
+    brand: str
+    category: str
+    subcategory: str
+    image_url: str | None
+    currency: str
+    current_price: Decimal
+    list_price: Decimal
+    discount_percent: int
+    available: int
+    stock_status: StockStatus
+    rating: Decimal | None
+    review_count: int | None
+
+
+class ProductPage(BaseModel):
+    items: list[ProductCard]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+def _card_query():
+    return (
+        select(
+            Product,
+            Brand.name,
+            Category.name,
+            Subcategory.name,
+            Price,
+            product_availability.c.available,
+        )
+        .join(Brand, Brand.id == Product.brand_id)
+        .join(Subcategory, Subcategory.id == Product.subcategory_id)
+        .join(Category, Category.id == Subcategory.category_id)
+        .join(Price, Price.product_id == Product.id)
+        .join(product_availability, product_availability.c.product_id == Product.id)
+        .where(Product.active.is_(True))  # inactive: not shown, even with stock (rule 6)
+    )
+
+
+def _to_card(row) -> ProductCard:
+    product, brand, category, subcategory, price, available = row
+    return ProductCard(
+        product_id=product.id,
+        sku=product.sku,
+        name=product.name,
+        brand=brand,
+        category=category,
+        subcategory=subcategory,
+        image_url=product.image_url,
+        currency=price.currency,
+        current_price=price.current_price,
+        list_price=price.list_price,
+        discount_percent=price.discount_percent,
+        available=available,
+        stock_status=stock_status(available),
+        rating=product.rating,
+        review_count=product.review_count,
+    )
+
+
+def list_products(
+    session: Session, category: str | None = None, page: int = 1, page_size: int = 24
+) -> ProductPage:
+    """Active products, paginated, optionally by category. Ordered by category (its
+    display order), then name, so pages are stable."""
+    if page < 1 or not 1 <= page_size <= MAX_PAGE_SIZE:
+        raise DomainError("INVALID_INPUT", f"page >= 1 and page_size between 1 and {MAX_PAGE_SIZE}")
+    stmt = _card_query()
+    if category is not None:
+        stmt = stmt.where(Category.name == category)
+    total = session.scalar(select(func.count()).select_from(stmt.subquery()))
+    rows = session.execute(
+        stmt.order_by(Category.id, Subcategory.sort_order, Product.name, Product.id)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    return ProductPage(
+        items=[_to_card(r) for r in rows],
+        page=page,
+        page_size=page_size,
+        total=total,
+        total_pages=max(1, -(-total // page_size)),
+    )
+
+
+def product_cards(session: Session, product_ids: list[str]) -> list[ProductCard]:
+    """Cards for the given IDs, in the same order (chat cards). Unknown or inactive IDs
+    are skipped: the UI never renders a product that is not for sale."""
+    ids = list(dict.fromkeys(product_ids))[:MAX_CARD_IDS]
+    if not ids:
+        return []
+    by_id = {
+        card.product_id: card
+        for card in map(_to_card, session.execute(_card_query().where(Product.id.in_(ids))))
+    }
+    return [by_id[pid] for pid in ids if pid in by_id]
+
+
+# --- Categories and warehouses ----------------------------------------------------------------
+
+
+class CategoryOut(BaseModel):
+    category_id: str
+    name: str
+    subcategories: list[str]
+    product_count: int  # active products
+
+
+class WarehouseOut(BaseModel):
+    warehouse_id: str
+    name: str
+    city: str | None
+    department: str | None
+    pickup_enabled: bool
+    shipping_enabled: bool
+
+
+def list_categories(session: Session) -> list[CategoryOut]:
+    counts = dict(
+        session.execute(
+            select(Subcategory.category_id, func.count(Product.id))
+            .join(Product, Product.subcategory_id == Subcategory.id)
+            .where(Product.active.is_(True))
+            .group_by(Subcategory.category_id)
+        ).all()
+    )
+    subs: dict[str, list[str]] = {}
+    for sub in session.scalars(select(Subcategory).order_by(Subcategory.sort_order)):
+        subs.setdefault(sub.category_id, []).append(sub.name)
+    return [
+        CategoryOut(
+            category_id=c.id,
+            name=c.name,
+            subcategories=subs.get(c.id, []),
+            product_count=counts.get(c.id, 0),
+        )
+        for c in session.scalars(select(Category).order_by(Category.id))
+    ]
+
+
+def list_warehouses(session: Session) -> list[WarehouseOut]:
+    return [
+        WarehouseOut(
+            warehouse_id=w.id,
+            name=w.name,
+            city=w.city,
+            department=w.department,
+            pickup_enabled=w.pickup_enabled,
+            shipping_enabled=w.shipping_enabled,
+        )
+        for w in session.scalars(select(Warehouse).order_by(Warehouse.id))
+    ]
+
+
+# --- Related products (docs/plans/related-and-compare-tools.md, step 1) ----------------------
+
+
+class RelationType(StrEnum):
+    ALTERNATIVE_TO = "alternative_to"
+    ACCESSORY_FOR = "accessory_for"
+    OFTEN_BOUGHT_WITH = "often_bought_with"
+
+
+class RelatedProduct(ProductCard):
+    relation_type: RelationType
+    strength: Decimal | None
+
+
+class RelatedResult(BaseModel):
+    items: list[RelatedProduct]
+    filtered_out: dict[str, int]  # {"inactive": n, "out_of_stock": n}
+
+
+def get_related(
+    session: Session,
+    product_id: str,
+    relation_type: RelationType,
+    in_stock_only: bool = True,
+) -> RelatedResult:
+    """Related products from product_relations. The related one is related_product_id:
+    for accessory_for, "laptop -> webcam" means the webcam is an accessory of the laptop.
+    Inactive products are always excluded; out of stock ones too if in_stock_only.
+    Works for a discontinued source too ("that one is gone, look at these")."""
+    if session.get(Product, product_id) is None:
+        raise DomainError(
+            "NOT_FOUND", f"Product {product_id} does not exist", {"product_id": product_id}
+        )
+    relations = session.execute(
+        select(ProductRelation.related_product_id, ProductRelation.strength, Product.active)
+        .join(Product, Product.id == ProductRelation.related_product_id)
+        .where(
+            ProductRelation.product_id == product_id,
+            ProductRelation.relation_type == relation_type.value,
+        )
+        .order_by(ProductRelation.strength.desc(), ProductRelation.related_product_id)
+    ).all()
+    filtered = {"inactive": 0, "out_of_stock": 0}
+    cards = {c.product_id: c for c in product_cards(session, [r[0] for r in relations])}
+    items = []
+    for related_id, strength, active in relations:
+        if not active:
+            filtered["inactive"] += 1
+            continue
+        card = cards[related_id]
+        if in_stock_only and card.available == 0:
+            filtered["out_of_stock"] += 1
+            continue
+        items.append(
+            RelatedProduct(**card.model_dump(), relation_type=relation_type, strength=strength)
+        )
+    return RelatedResult(items=items, filtered_out=filtered)

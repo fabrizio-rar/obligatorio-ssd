@@ -1,4 +1,4 @@
-"""POST /api/chat: one turn with the assistant. Only HTTP here; the logic is in agent/."""
+"""POST /api/chat: one turn with the assistant (requires login). Only HTTP here."""
 
 import uuid
 from functools import lru_cache
@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.agent.llm.base import LLMError, LLMProvider
 from app.agent.llm.factory import get_llm_provider
-from app.agent.service import ChatTurn, chat_turn, error_body
+from app.agent.service import ChatTurn, chat_turn
+from app.auth.dependencies import CurrentUser
 from app.config import get_settings
 from app.db import get_db
 from app.domain.errors import DomainError
@@ -38,36 +39,30 @@ def get_query_embedder() -> Embedder | None:
 @router.post("/chat", response_model=ChatTurn)
 async def chat(
     request: ChatRequest,
+    user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
     llm: Annotated[LLMProvider | None, Depends(get_llm)],
     embedder: Annotated[Embedder | None, Depends(get_query_embedder)],
 ):
     message = request.message.strip()
     if not message:
-        return JSONResponse(
-            error_body("EMPTY_MESSAGE", "El mensaje está vacío"),
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        )
+        raise DomainError("EMPTY_MESSAGE", "El mensaje está vacío")
     if llm is None:
-        return JSONResponse(
-            error_body("CHAT_DISABLED", "Asistente no disponible: falta configurar OPENAI_API_KEY"),
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        raise DomainError(
+            "CHAT_DISABLED", "Asistente no disponible: falta configurar OPENAI_API_KEY"
         )
     try:
-        return await chat_turn(db, llm, embedder, get_settings(), message, request.conversation_id)
-    except DomainError as error:
-        return JSONResponse(error.to_dict(), status_code=status.HTTP_404_NOT_FOUND)
+        return await chat_turn(
+            db, llm, embedder, get_settings(), message, request.conversation_id, user_id=user.id
+        )
     except LLMError as error:
-        code = (
-            status.HTTP_503_SERVICE_UNAVAILABLE if error.retryable else status.HTTP_502_BAD_GATEWAY
-        )
-        return JSONResponse(
-            error_body(
-                error.code,
-                "El asistente no está disponible en este momento. Probá de nuevo en un rato."
-                if error.retryable
-                else "El asistente tuvo un error y no pudo responder.",
-                {"retryable": error.retryable},
-            ),
-            status_code=code,
-        )
+        retryable = error.retryable
+        body = DomainError(
+            error.code,
+            "El asistente no está disponible en este momento. Probá de nuevo en un rato."
+            if retryable
+            else "El asistente tuvo un error y no pudo responder.",
+            {"retryable": retryable},
+        ).to_dict()
+        code = status.HTTP_503_SERVICE_UNAVAILABLE if retryable else status.HTTP_502_BAD_GATEWAY
+        return JSONResponse(body, status_code=code)

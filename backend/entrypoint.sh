@@ -1,9 +1,11 @@
 #!/bin/sh
-# Startup: migrations -> first ingest (only if the catalog is empty) -> embeddings -> API.
+# Startup: migrations -> first ingest (only if the catalog is empty) -> demo user
+# -> embeddings -> API.
 set -e
 
 alembic upgrade head
 python -m scripts.ingest --if-empty
+python -m scripts.seed_demo_user
 # Only embeds new/changed products (0 API calls when nothing changed). A failure here
 # (no credit, OpenAI down) must not stop the app: search falls back to full-text.
 python -m scripts.index_embeddings || echo "WARNING: embeddings step failed; the API starts anyway"
