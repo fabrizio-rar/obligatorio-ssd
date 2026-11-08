@@ -19,7 +19,8 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [x] Búsqueda (N8): embeddings en `product_embeddings` (`scripts.index_embeddings`) + `retrieval/search.py` (filtros SQL + vectorial + usos como señal, RRF). La conecta al agente N9
 - [~] Agente (N9): loop + `POST /api/chat` (varios turnos, sin login ni streaming) + tools `search_products` y `get_product`. Faltan `compare_products`, `get_related_products` y las de carrito/órdenes/checkout (ver `docs/PLAN.md` §10.9.1)
 - [~] Auth (N3) y catálogo (N4): backend listo (`/api/auth/*`, `/api/products`, `/api/products/{id}`, `/api/categories`, `/api/warehouses`); falta la UI
-- [ ] Resto del núcleo (N5–N7, N10–N14): ver `docs/PLAN.md` §20.1
+- [~] Carrito (N5): backend listo (`domain/cart.py` + `/api/cart*`); faltan las tools del agente (`get_cart`, `add_to_cart`, `update_cart_item`, `remove`/`clear` con confirmación) y la UI
+- [ ] Resto del núcleo (N6, N7, N10–N14): ver `docs/PLAN.md` §20.1
 
 > Cuando se complete un ítem del núcleo, actualizá esta checklist **y** la columna "Estado" de `docs/PLAN.md` §20.1 en el mismo cambio.
 

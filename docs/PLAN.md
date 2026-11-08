@@ -367,8 +367,8 @@ Vista `product_availability`: `product_id`, `SUM(available_qty) AS available`, e
 |---|---|---|
 | `users` | `id`, `username UNIQUE`, `password_hash`, `created_at` | bcrypt. Usuario `demo` creado por el seed |
 | `auth_tokens` | `token_hash PK` (SHA-256 del token aleatorio de 32 bytes), `user_id`, `created_at`, `expires_at` | **Solo se guarda el hash:** quien lea la DB no puede usar los tokens. Logout = borrar la fila |
-| `carts` | `id`, `user_id UNIQUE`, `updated_at` | Un carrito activo por usuario |
-| `cart_items` | `cart_id`, `product_id`, `quantity CHECK (>0)` | Sin precio: se lee el actual |
+| `carts` | `id`, `user_id UNIQUE`, `updated_at` | Un carrito activo por usuario; se crea al agregar el primer ítem |
+| `cart_items` | `cart_id`, `product_id` (PK compuesta), `quantity CHECK (>0)`, `added_at` | Sin precio: se lee el actual. Máx. `MAX_QUANTITY_PER_ITEM` = 10 por producto (dominio). Un producto que se desactiva o se queda sin stock **no se borra en silencio**: el carrito lo marca (`issues`: `INACTIVE` / `OUT_OF_STOCK` / `INSUFFICIENT_STOCK`) y `can_checkout` pasa a `false` |
 | `orders` | `id`, `code` (`MN-ORD-000123`), `user_id`, `status`, `customer_name`, `email`, `delivery_method`, `shipping_address`, `pickup_warehouse_id`, `payment_method`, `subtotal`, `total`, `created_at`, `confirmed_at` | `status ∈ {PENDING_CONFIRMATION, CONFIRMED, CANCELLED}`; `delivery_method ∈ {SHIPPING, PICKUP}`. `CHECK`: si es `SHIPPING`, la dirección no puede ser nula; si es `PICKUP`, la sucursal no puede ser nula |
 | `order_items` | `order_id`, `product_id`, `product_name`, `sku`, `unit_price`, `quantity`, `line_total` | Nombre y precio **congelados** |
 | `order_item_allocations` | `order_item_id`, `warehouse_id`, `quantity` | De qué sucursal salió cada unidad. Con retiro es siempre la sucursal elegida; con envío puede repartirse entre varias. Evidencia de RF-15 |
@@ -815,7 +815,7 @@ sequenceDiagram
 | GET | `/api/products/{id}` | — | Detalle + specs + stock por sucursal + `alternatives` / `accessories` / `often_bought_with` (activos y con stock). Inactivo → `status: discontinued`, sin precio ni stock, solo alternativas. Usa `domain/catalog.py`, igual que la tool `get_product` |
 | GET | `/api/products?ids=a,b,c` | — | Para las tarjetas del chat (máx. 20, en el mismo orden; omite inactivos e inexistentes). No se combina con `category` |
 | GET | `/api/categories` | — | |
-| GET/POST/PATCH/DELETE | `/api/cart`, `/api/cart/items[/{product_id}]` | ✔ | Carrito (las mutaciones devuelven `undo_token`) |
+| GET/POST/PATCH/DELETE | `/api/cart`, `/api/cart/items[/{product_id}]` | ✔ | Carrito. Cada mutación devuelve el carrito actualizado (`items` con precio y stock actuales, `item_count`, `total`, `can_checkout`). Errores: 404 `NOT_FOUND` / `NOT_IN_CART`, 409 `INACTIVE` / `OUT_OF_STOCK` (con `available` e `in_cart`), 422 cantidad inválida. 🟡 `undo_token` llega con E3 |
 | DELETE | `/api/cart` | ✔ | Vaciar carrito (lo usa el botón de confirmación de nivel 3) |
 | POST | `/api/cart/undo/{token}` | ✔ | Deshacer el último cambio |
 | GET | `/api/warehouses` | — | Sucursales (para el detalle de producto y el checkout) |
@@ -832,7 +832,7 @@ sequenceDiagram
 
 `Authorization: Bearer <token>`. El catálogo es público; carrito, órdenes y chat requieren login.
 **Errores:** todo `DomainError` sale con `{"ok": false, "error": {code, message, details}}` desde un único handler (`api/errors.py`): 401 `UNAUTHORIZED` / `INVALID_CREDENTIALS` (mismo mensaje para usuario inexistente y contraseña mal), 404 `NOT_FOUND` / `CONVERSATION_NOT_FOUND` (la conversación de otro usuario también da 404), 409 `USERNAME_TAKEN`, 422 `INVALID_INPUT`.
-**Implementado (08/11):** auth (`register`, `login`, `logout`, `me`), catálogo (`/products`, `/products/{id}`, `/products?ids=`, `/categories`, `/warehouses`) y `POST /api/chat` con login. Usuario `demo` / `demo1234` creado en el arranque (`scripts.seed_demo_user`).
+**Implementado (08/11):** carrito (`domain/cart.py` + `/api/cart*`), auth (`register`, `login`, `logout`, `me`), catálogo (`/products`, `/products/{id}`, `/products?ids=`, `/categories`, `/warehouses`) y `POST /api/chat` con login. Usuario `demo` / `demo1234` creado en el arranque (`scripts.seed_demo_user`).
 
 ### 12.1 Transacción de confirmación
 ```sql
@@ -1184,7 +1184,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N2 | Ingesta de las 8 hojas + reporte | §8 | A | ✅ |
 | N3 | Login y register simples | — | A + C | 🟡 backend ✅ (token con hash, demo seed); falta la UI |
 | N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C | 🟡 backend ✅ (`/products`, detalle con relacionados, `/categories`, `/warehouses`); falta la UI |
-| N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C | ⬜ |
+| N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C | 🟡 backend ✅ (`domain/cart.py` + `/api/cart*`, validación suave contra el stock total); faltan las tools del agente y la UI |
 | N6 | Checkout con **envío y retiro** + modal de confirmación (acción, productos, cantidades, precios, total) + transacción con **revalidación de precio, stock y activo** + asignación por sucursal | RF-11..15 | A + C | ⬜ |
 | N7 | Historial de órdenes | RF-16 | A + C | ⬜ |
 | N8 | Búsqueda: filtros SQL + **vectorial** (embeddings multilingües) | RF-02 | B | ✅ `retrieval/search.py` (la tool la conecta N9) |
