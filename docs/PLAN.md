@@ -45,8 +45,8 @@
 | Carrito | ✅ CRUD con validación suave de stock; ítems que dejan de venderse quedan marcados | `app/domain/cart.py`, `/api/cart*` |
 | Agente + chat | ✅ `POST /api/chat` (con login, varios turnos, sin streaming), 9 tools, guardrails, stop conditions, historial | `app/agent/`, `/api/chat`, `/api/conversations*` |
 | Checkout + órdenes | ⬜ N6–N7 (§12.1, §12.2), y las tools `get_orders`, `get_order`, `start_checkout` | — |
-| Voz | ✅ `POST /api/transcribe` (API de OpenAI, ~1 s por mensaje); falta el botón 🎤 en la UI | `app/stt/`, `app/api/transcribe.py` |
-| Frontend | ⬜ N1 (parte FE), N3–N7 y N11 (UI) | — |
+| Voz | ✅ `POST /api/transcribe` (API de OpenAI, ~1 s por mensaje) + botón 🎤 en la UI | `app/stt/`, `app/api/transcribe.py` |
+| Frontend | ✅ N1 (parte FE), N3, N4, N5, N11 y N12 (UI); ⬜ N6 y N7 (esperan sus endpoints) | `frontend/src/` (estado en `frontend/README.md`) |
 | Tests | ✅ 260 tests (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM`. Faltan los de la transacción de compra y concurrencia (N6) | `backend/tests/` |
 | Skills del coding agent | ✅ `testing`, `mercanova-review`, `add-agent-tool` | `.claude/skills/` |
 
@@ -120,15 +120,15 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 ### Funcionales
 | ID | Requerimiento | Cómo lo resolvemos | Componente | Estado (backend, 08/11) |
 |---|---|---|---|---|
-| RF-01 | Catálogo | `GET /products` paginado (solo activos, `?category=`; la búsqueda es por chat) y detalle con specs, stock por sucursal y relacionados | API + FE | ✅ API (UI ⬜) |
+| RF-01 | Catálogo | `GET /products` paginado (solo activos, `?category=`; la búsqueda es por chat) y detalle con specs, stock por sucursal y relacionados | API + FE | ✅ API + UI |
 | RF-02 | Búsqueda en lenguaje natural | Búsqueda híbrida (§9) **solo por chat**: el agente traduce y arma los filtros para la tool `search_products` | retrieval | ✅ (por chat) |
 | RF-03 | Asistente conversacional | Agente con tools (§10) | agent | ✅ sin streaming |
-| RF-04 | Recomendaciones explicadas | Justifica con `recommended_for`, specs y rating, y con tarjetas desde la DB | agent + FE | ✅ (tarjetas en UI ⬜) |
+| RF-04 | Recomendaciones explicadas | Justifica con `recommended_for`, specs y rating, y con tarjetas desde la DB | agent + FE | ✅ (tarjetas en la UI desde `/api/products?ids=`) |
 | RF-05 | Aclaraciones | `type: "clarification"` + reglas del prompt + evals. También al desambiguar nombres duplicados | agent | ✅ |
-| RF-06 | Comparación | `compare_products` → tabla de specs alineadas por atributo | agent + FE | ✅ tool + `/api/products/compare` (tabla UI ⬜) |
+| RF-06 | Comparación | `compare_products` → tabla de specs alineadas por atributo | agent + FE | ✅ tool + `/api/products/compare` + tabla en la UI (compacta en el chat y completa en `/compare`) |
 | RF-07 | Información actual | Precio y stock **solo** desde tools que leen la DB, nunca desde el índice vectorial | tools | ✅ |
-| RF-08 | Voz | API de OpenAI, `gpt-4o-transcribe` (§11) | stt | ✅ `POST /api/transcribe` (botón 🎤 en la UI ⬜) |
-| RF-09 | Carrito | Dominio `cart` + REST + tools (misma lógica) | domain | ✅ REST + 5 tools (UI ⬜) |
+| RF-08 | Voz | API de OpenAI, `gpt-4o-transcribe` (§11) | stt | ✅ `POST /api/transcribe` + botón 🎤 en la UI |
+| RF-09 | Carrito | Dominio `cart` + REST + tools (misma lógica) | domain | ✅ REST + 5 tools + UI |
 | RF-10 | Validación de disponibilidad | Al agregar (suave, contra el disponible total) y al confirmar (dura, transaccional) | domain | 🟡 suave ✅; dura (al confirmar) ⬜ N6 |
 | RF-11 | Checkout | Nombre, email, **método de entrega** (envío a domicilio con dirección, o retiro en una sucursal que tenga stock de todo el carrito), pago **simulado** | FE + domain | ⬜ |
 | RF-12 | Confirmación explícita | Orden `PENDING_CONFIRMATION` → botón "Confirmar compra" → `POST /orders/{id}/confirm` | workflow | ⬜ (el agente ya no tiene forma de comprar) |
@@ -142,11 +142,11 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 ### No funcionales
 | ID | Cómo | Estado (08/11) |
 |---|---|---|
-| RNF-01/02/07 | `docker compose up --build` desde un clone limpio, con migraciones e ingesta automáticas al primer arranque | ✅ backend + db (frontend ⬜) |
+| RNF-01/02/07 | `docker compose up --build` desde un clone limpio, con migraciones e ingesta automáticas al primer arranque | ✅ backend + db + frontend (`:5173`) |
 | RNF-03 | Todo por variables de entorno, con `.env.example` versionado. Ni keys ni modelos hardcodeados | ✅ |
 | RNF-04 | Transacciones, errores tipados, UI con reintentar; la app sigue funcionando si el LLM falla | ✅ backend: errores tipados uniformes, transacciones, sin key levanta igual (chat 503) |
 | RNF-05 | §16 | 🟡 260 tests; faltan los de la compra |
-| RNF-06 | Capas separadas, ruff + eslint, TS estricto | ✅ backend (ruff); eslint/TS con el frontend |
+| RNF-06 | Capas separadas, ruff + eslint, TS estricto | ✅ backend (ruff) + frontend (TS `strict` + oxlint en lugar de eslint) |
 
 ---
 
@@ -840,7 +840,8 @@ sequenceDiagram
   | "Agregá dos Vector Air 690… compará el Orbit Sound 458 con el Quanta Quiet 638" | "Agregar los…", "OrbitZone", "KantaKit" | **"Agregá dos… compará el Orbit Sound 458 con el Kanta Quiet 638"** | "Padre A2…", "Kairo Keys" |
 
   Latencia ~0,8–1,6 s por audio de 10 s en los tres. Se eligió **`gpt-4o-transcribe`**: el mejor en voseo y nombres de producto, a ~USD 0,006/min (~USD 0,001 por mensaje). `whisper-1` rechazó el m4a de macOS (400). Una primera prueba con una voz que no era la de español daba "100 dólares" en vez de 200: era la voz, no el modelo.
-- **Pendiente para la UI (N12):** botón 🎤, `MediaRecorder`, corte a los 30 s, permiso de micrófono denegado y el texto editable en el input.
+- **UI (N12, 08/11):** botón 🎤 que funciona **manteniéndolo apretado** (como el diagrama) **o con dos toques** (la primera vez el navegador pide permiso y no se puede "mantener" durante el diálogo); `MediaRecorder` (webm/opus o mp4 en Safari), corte a los 30 s, Esc cancela, mensajes para permiso denegado / sin micrófono / micrófono ocupado, y el texto queda **editable** en el input. Mientras graba, una **línea de nivel en vivo** (historial de los últimos segundos, `AnalyserNode`) muestra si llega audio; tras 1,5 s sin sonido avisa "No llega audio".
+- **Hallazgo (08/11): el modelo inventa texto si el audio no tiene voz.** Con un micrófono mudo `gpt-4o-transcribe` devolvió "…un producto que se llame Kairo Dock" y con un pitido "Claro, ¿qué buscas?": el `prompt` con el vocabulario del catálogo lo empuja a "completar". Mitigación en la UI: si el medidor de nivel no detectó sonido en toda la grabación, **no se envía** ("No se escuchó tu voz"). Para ruido que no es voz queda el texto editable. Pendiente del backend (B): evaluar descartar transcripciones sin voz (p. ej. VAD o umbral de energía) o un `prompt` más corto.
 
 ---
 
@@ -1225,16 +1226,16 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 |---|---|---|---|---|
 | N1 | Monorepo + `docker compose up` (db, backend, frontend) + `.env.example` | RNF-01/02/03/07 | C | ✅ |
 | N2 | Ingesta de las 8 hojas + reporte | §8 | A | ✅ |
-| N3 | Login y register simples | — | A + C | 🟡 backend ✅ (token con hash, demo seed); falta la UI |
-| N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C | 🟡 backend ✅ (`/products`, detalle con relacionados, `/categories`, `/warehouses`); falta la UI |
-| N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C | 🟡 backend ✅ (`domain/cart.py` + `/api/cart*`, validación suave contra el stock total) + tools del agente ✅; falta la UI |
+| N3 | Login y register simples | — | A + C | ✅ backend (token con hash, demo seed) + UI (login, registro, sesión, 401 → login) |
+| N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C | ✅ backend (`/products`, detalle con relacionados, `/categories`, `/warehouses`) + UI (grilla por categoría, detalle con tabs). Filtros por marca/precio/stock: la API todavía no los tiene |
+| N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C | ✅ backend ✅ (`domain/cart.py` + `/api/cart*`, validación suave contra el stock total) + tools del agente ✅ + UI ✅ (drawer, +/−, quitar, vaciar con confirmación, avisos de stock) |
 | N6 | Checkout con **envío y retiro** + modal de confirmación (acción, productos, cantidades, precios, total) + transacción con **revalidación de precio, stock y activo** + asignación por sucursal | RF-11..15 | A + C | ⬜ |
 | N7 | Historial de órdenes | RF-16 | A + C | ⬜ |
 | N8 | Búsqueda: filtros SQL + **vectorial** (embeddings multilingües) | RF-02 | B | ✅ `retrieval/search.py` (la tool la conecta N9) |
 | N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | 🟡 loop + `POST /api/chat` + 9 tools: `search_products`, `get_product`, `get_related_products`, `compare_products` y las 5 de carrito (§10.9.1); faltan `get_orders`, `get_order` y `start_checkout` (dependen de N6) |
 | N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B | 🟡 casi todo ✅: pipeline de 3 etapas, retry transitorio del LLM (SDK), fallbacks honestos, las 6 stop conditions (incluida confirmación humana), historial y tool results recortados, IDs validados contra tools + DB, tarjetas desde `/api/products?ids=`, ninguna tool compra, quitar/vaciar con confirmación. Falta: retry ante errores transitorios de la DB |
-| N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ⬜ |
-| N12 | Voz (faster-whisper + botón 🎤) | RF-08 | B + C | 🟡 backend ✅ (`POST /api/transcribe` con la API de OpenAI, §11); falta el botón 🎤 en la UI |
+| N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ✅ tarjetas por ID, tabla comparativa (`comparison_ids` → `/api/products/compare`, en el chat y en `/compare`), aclaraciones, chips, reintentar, confirmación de nivel 3, `refresh_cart`, "ver tools usadas", historial |
+| N12 | Voz (faster-whisper + botón 🎤) | RF-08 | B + C | ✅ backend (`POST /api/transcribe` con la API de OpenAI, §11) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input) |
 | N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | 🟡 dominio ✅, API ✅, agente con FakeLLM ✅ (260 tests); faltan transacción de compra y concurrencia (N6) |
 | N14 | `AGENTS.md` + 2 skills | §17 | Todos | ✅ `AGENTS.md` + `CLAUDE.md` + 3 skills (`testing`, `mercanova-review`, `add-agent-tool`) + evidencia en `docs/evidence/` |
 

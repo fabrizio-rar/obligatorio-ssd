@@ -4,7 +4,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 
 Obligatorio 2 de **Sistemas de Soporte de Decisión** (ORT, 2026).
 
-> **Estado (08/11/2026):** backend del núcleo funcionando (catálogo, auth, carrito, búsqueda RAG y agente con 9 tools). Faltan el checkout y las órdenes, la voz y el frontend. Detalle en [`docs/PLAN.md` §0.1](docs/PLAN.md#01-estado-de-la-implementación-backend-0811).
+> **Estado (08/11/2026):** backend del núcleo funcionando (catálogo, auth, carrito, búsqueda RAG y agente con 9 tools). Frontend en http://localhost:5173 con login, catálogo, detalle, carrito y chat (tarjetas, comparación, confirmaciones, historial y voz 🎤). Faltan el checkout y las órdenes. Detalle en [`docs/PLAN.md` §0.1](docs/PLAN.md#01-estado-de-la-implementación-backend-0811).
 
 ---
 
@@ -12,7 +12,7 @@ Obligatorio 2 de **Sistemas de Soporte de Decisión** (ORT, 2026).
 
 - **Docker** con Docker Compose v2 (`docker compose version`).
 - **Una API key de OpenAI** para el chat y los embeddings. Es **opcional para levantar**: sin key, el catálogo, el carrito y el resto de la API funcionan, y el chat responde `503`.
-- Puertos libres en tu máquina: **8000** (API) y **5433** (Postgres, solo en localhost).
+- Puertos libres en tu máquina: **5173** (frontend), **8000** (API) y **5433** (Postgres, solo en localhost).
 
 No hace falta tener Python ni Postgres instalados: todo corre en contenedores.
 
@@ -32,6 +32,8 @@ El primer arranque hace todo solo. No hay que correr migraciones ni la ingesta a
 3. `python -m scripts.seed_demo_user`: crea el usuario **`demo` / `demo1234`**.
 4. `python -m scripts.index_embeddings`: calcula los embeddings de los 360 productos con OpenAI (~USD 0,002, una sola vez; después solo los que cambian). Sin key se saltea.
 5. `uvicorn`: la API queda en **http://localhost:8000**.
+
+La app queda en **http://localhost:5173** (servicio `frontend`: Vite, que reenvía `/api` al backend). Entrá con `demo` / `demo1234`.
 
 Para verificar que levantó:
 
@@ -176,6 +178,10 @@ backend/
   alembic/        # migraciones
   scripts/        # ingest, index_embeddings, search, chat, seed_demo_user
   tests/          # unit/ e integration/ (Postgres real, FakeLLM)
+frontend/src/
+  api/            # cliente HTTP (token), tipos espejo del backend, endpoints
+  features/       # auth, catalog, cart, chat, compare (una carpeta por funcionalidad)
+  components/ui/  # componentes de shadcn (generados)
 data/raw/         # dataset de la cátedra (Excel)
 docs/             # PLAN.md (diseño y estado) y plans/
 ```

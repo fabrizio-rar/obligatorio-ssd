@@ -14,15 +14,16 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 
 ## Estado actual
 
-- [x] Esqueleto del monorepo + Docker (N1): `db`, `backend` y `frontend` (Vite en `:5173`, proxy `/api` → backend); el frontend ya tiene el chat conectado a `POST /api/chat`. Catálogo, carrito, checkout y órdenes llegan con sus endpoints
+- [x] Esqueleto del monorepo + Docker (N1): `db`, `backend` y `frontend` (Vite en `:5173`, proxy `/api` → backend); el frontend tiene router, login y sesión con token, catálogo, detalle, carrito y chat. Checkout y órdenes llegan con sus endpoints
 - [x] Ingesta del Excel (N2): 8 hojas + reporte en `reports/ingest_report.json`. Los embeddings (paso 5) se suman con N8 y el usuario demo (paso 6) con N3
 - [x] Búsqueda (N8): embeddings en `product_embeddings` (`scripts.index_embeddings`) + `retrieval/search.py` (filtros SQL + vectorial + usos como señal, RRF). La conecta al agente N9
 - [~] Agente (N9): loop + `POST /api/chat` (varios turnos, con login, sin streaming) + historial `GET /api/conversations` y `/{id}/messages` + 9 tools (`search_products`, `get_product`, `get_related_products`, `compare_products` y las 5 de carrito, nivel 3 con confirmación en la UI). Faltan `get_orders`, `get_order` y `start_checkout` (dependen del checkout, N6)
-- [~] Auth (N3) y catálogo (N4): backend listo (`/api/auth/*`, `/api/products`, `/api/products/{id}`, `/api/categories`, `/api/warehouses`); falta la UI
-- [~] Carrito (N5): backend + tools del agente listos (`domain/cart.py`, `/api/cart*`, `get_cart`/`add_to_cart`/`update_cart_item`/`remove_from_cart`/`clear_cart`); falta la UI
+- [x] Auth (N3) y catálogo (N4): backend (`/api/auth/*`, `/api/products`, `/api/products/{id}`, `/api/categories`, `/api/warehouses`) + UI (login/registro, grilla por categoría con paginación, detalle con specs, stock por sucursal y relacionados)
+- [x] Carrito (N5): backend + tools del agente listos (`domain/cart.py`, `/api/cart*`, `get_cart`/`add_to_cart`/`update_cart_item`/`remove_from_cart`/`clear_cart`) + UI (drawer con +/−, quitar, vaciar con confirmación, avisos de stock; badge que se refresca con `ui_actions`)
+- [x] Chat en el frontend (N11): tarjetas por ID (`/products?ids=`), tabla comparativa (`comparison_ids` → `/api/products/compare`, compacta en el chat y completa en `/compare`), aclaraciones, chips, reintentar, tarjeta de confirmación de nivel 3, "ver tools usadas" e historial de conversaciones
 - [x] `AGENTS.md` + skills (N14): `testing`, `mercanova-review`, `add-agent-tool`
-- [~] Voz (N12): backend listo (`POST /api/transcribe`); falta el botón 🎤 en la UI
-- [ ] Resto del núcleo (N6, N7, N10, N11, N13): ver `docs/PLAN.md` §20.1
+- [x] Voz (N12): backend (`POST /api/transcribe`) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input)
+- [ ] Resto del núcleo (N6, N7, N10, N13): ver `docs/PLAN.md` §20.1
 
 > Cuando se complete un ítem del núcleo, actualizá esta checklist **y** la columna "Estado" de `docs/PLAN.md` §20.1 en el mismo cambio.
 
@@ -107,6 +108,7 @@ curl -X POST localhost:8000/api/chat -H "Authorization: Bearer $TOKEN" -H 'Conte
 docker compose exec backend python -m scripts.seed_demo_user   # crea demo/demo1234 si falta (idempotente)
 docker compose exec backend pytest                 # tests (sin evals); los de integración usan TEST_DATABASE_URL
 docker compose exec backend ruff check . && docker compose exec backend ruff format --check .
+docker compose exec frontend sh -c 'npx tsc -b && npx oxlint'   # frontend: tipos (TS strict) + lint; http://localhost:5173 (hot reload sobre src/)
 docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-luna (gasta créditos: correr a mano)
 ```
 
