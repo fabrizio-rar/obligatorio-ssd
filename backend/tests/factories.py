@@ -1,0 +1,216 @@
+"""Small hand-made workbook (already as records) for unit tests. Each test copies it
+with make_records() and breaks exactly the thing it wants to check."""
+
+import copy
+from datetime import date, datetime
+from typing import Any
+
+_BASE: dict[str, list[dict[str, Any]]] = {
+    "Brands": [
+        {
+            "brand_id": "BR001",
+            "brand_name": "NovaTech",
+            "country_of_origin": "Uruguay",
+            "positioning": "balanced",
+        },
+        {
+            "brand_id": "BR002",
+            "brand_name": "Aether",
+            "country_of_origin": "Germany",
+            "positioning": "premium",
+        },
+    ],
+    # Same subcategory name ("Wireless") in two categories: must resolve by the pair
+    "Categories": [
+        {
+            "category_id": "CAT01",
+            "category_name": "Headphones",
+            "subcategory_id": "SUB001",
+            "subcategory_name": "Wireless",
+            "department": "Electronics",
+            "sort_order": 11,
+        },
+        {
+            "category_id": "CAT02",
+            "category_name": "Mice",
+            "subcategory_id": "SUB002",
+            "subcategory_name": "Wireless",
+            "department": "Electronics",
+            "sort_order": 21,
+        },
+    ],
+    "Warehouses": [
+        {
+            "warehouse_id": "WH-A",
+            "warehouse_name": "A",
+            "city": "Montevideo",
+            "department": "Montevideo",
+            "country": "Uruguay",
+            "pickup_enabled": True,
+            "shipping_enabled": True,
+        },
+        {
+            "warehouse_id": "WH-B",
+            "warehouse_name": "B",
+            "city": "Colonia",
+            "department": "Colonia",
+            "country": "Uruguay",
+            "pickup_enabled": True,
+            "shipping_enabled": True,
+        },
+    ],
+    "Products": [
+        {
+            "product_id": "MN-HDP-0001",
+            "sku": "HDP-1",
+            "name": "Nimbus Sound 1",
+            "brand": "NovaTech",
+            "brand_id": "BR001",
+            "category": "Headphones",
+            "subcategory": "Wireless",
+            "short_description": "Short",
+            "description": "Long",
+            "recommended_for": "calls; video calls",
+            "not_recommended_for": None,
+            "key_features": "ANC; 30h battery",
+            "tags": "headphones; anc",
+            "color": "Black",
+            "weight_kg": 0.25,
+            "width_cm": 18.0,
+            "height_cm": 20.0,
+            "depth_cm": 8.0,
+            "warranty_months": 12,
+            "return_days": 30,
+            "rating": 4.3,
+            "review_count": 100,
+            "launch_date": datetime(2025, 3, 1),
+            "active": True,
+            "image_url": "https://x/1.png",
+        },
+        {
+            "product_id": "MN-MOU-0001",
+            "sku": "MOU-1",
+            "name": "Vector Click",
+            "brand": "Aether",
+            "brand_id": "BR002",
+            "category": "Mice",
+            "subcategory": "Wireless",
+            "short_description": None,
+            "description": None,
+            "recommended_for": "gaming",
+            "not_recommended_for": "air travel",
+            "key_features": None,
+            "tags": None,
+            "color": None,
+            "weight_kg": None,
+            "width_cm": None,
+            "height_cm": None,
+            "depth_cm": None,
+            "warranty_months": None,
+            "return_days": None,
+            "rating": None,
+            "review_count": None,
+            "launch_date": None,
+            "active": False,
+            "image_url": None,
+        },
+    ],
+    "Pricing": [
+        {
+            "product_id": "MN-HDP-0001",
+            "currency": "USD",
+            "list_price": 200.0,
+            "current_price": 180.0,
+            "discount_percent": 10,
+            "tax_included": True,
+            "price_updated_at": datetime(2026, 10, 1),
+        },
+        {
+            "product_id": "MN-MOU-0001",
+            "currency": "USD",
+            "list_price": 49.99,
+            "current_price": 49.99,
+            "discount_percent": 0,
+            "tax_included": True,
+            "price_updated_at": None,
+        },
+    ],
+    "Specifications": [
+        {
+            "product_id": "MN-HDP-0001",
+            "attribute_group": "Audio",
+            "attribute_name": "ANC",
+            "value_text": "Yes",
+            "value_number": None,
+            "unit": None,
+        },
+        {
+            "product_id": "MN-HDP-0001",
+            "attribute_group": "Battery",
+            "attribute_name": "Battery Life",
+            "value_text": None,
+            "value_number": 30.0,
+            "unit": "h",
+        },
+        {
+            "product_id": "MN-MOU-0001",
+            "attribute_group": "Input",
+            "attribute_name": "DPI",
+            "value_text": None,
+            "value_number": 16000.0,
+            "unit": "DPI",
+        },
+    ],
+    "Inventory": [
+        {
+            "product_id": "MN-HDP-0001",
+            "warehouse_id": "WH-A",
+            "on_hand_qty": 5,
+            "reserved_qty": 1,
+            "available_qty": 4,
+            "inventory_status": "In stock",
+            "inventory_updated_at": datetime(2026, 10, 27, 13),
+        },
+        {
+            "product_id": "MN-HDP-0001",
+            "warehouse_id": "WH-B",
+            "on_hand_qty": 0,
+            "reserved_qty": 0,
+            "available_qty": 0,
+            "inventory_status": "Out of stock",
+            "inventory_updated_at": None,
+        },
+        {
+            "product_id": "MN-MOU-0001",
+            "warehouse_id": "WH-A",
+            "on_hand_qty": 2,
+            "reserved_qty": 0,
+            "available_qty": 2,
+            "inventory_status": "Low stock",
+            "inventory_updated_at": None,
+        },
+        {
+            "product_id": "MN-MOU-0001",
+            "warehouse_id": "WH-B",
+            "on_hand_qty": 3,
+            "reserved_qty": 0,
+            "available_qty": 3,
+            "inventory_status": "In stock",
+            "inventory_updated_at": None,
+        },
+    ],
+    "Relations": [
+        {
+            "product_id": "MN-HDP-0001",
+            "related_product_id": "MN-MOU-0001",
+            "relation_type": "often_bought_with",
+            "strength": 0.5,
+        },
+    ],
+}
+
+EXPECTED_LAUNCH_DATE = date(2025, 3, 1)
+
+
+def make_records() -> dict[str, list[dict[str, Any]]]:
+    return copy.deepcopy(_BASE)

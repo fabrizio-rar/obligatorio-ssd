@@ -14,8 +14,8 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 
 ## Estado actual
 
-- [ ] Esqueleto del monorepo + Docker (N1)
-- [ ] Ingesta del Excel (N2)
+- [~] Esqueleto del monorepo + Docker (N1): backend + db listos (`/api/health`); **falta el frontend**
+- [x] Ingesta del Excel (N2): 8 hojas + reporte en `reports/ingest_report.json`. Los embeddings (paso 5) se suman con N8 y el usuario demo (paso 6) con N3
 - [ ] Resto del núcleo (N3–N14): ver `docs/PLAN.md` §20.1
 
 > Actualizá esta checklist cuando se complete un ítem del núcleo.
@@ -69,8 +69,9 @@ docs/                  # PLAN.md, diagramas, capturas, informe
 cp .env.example .env                               # completar OPENAI_API_KEY
 docker compose up --build                          # levantar todo
 docker compose exec backend alembic upgrade head   # migraciones
-docker compose exec backend python -m scripts.ingest [--reset]
-docker compose exec backend pytest                 # tests (sin evals)
+docker compose exec backend python -m scripts.ingest [--reset]   # --reset también pisa el inventario
+docker compose exec backend pytest                 # tests (sin evals); los de integración usan TEST_DATABASE_URL
+docker compose exec backend ruff check . && docker compose exec backend ruff format --check .
 docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-luna (gasta créditos: correr a mano)
 ```
 
