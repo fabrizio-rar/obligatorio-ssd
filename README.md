@@ -183,6 +183,7 @@ docs/             # PLAN.md (diseño y estado) y plans/
 
 - [`docs/PLAN.md`](docs/PLAN.md): diseño completo, decisiones con sus trade-offs y estado de cada ítem.
 - [`AGENTS.md`](AGENTS.md): reglas del proyecto y convenciones, para el equipo y para los coding agents.
+- [`.claude/skills/`](.claude/skills/): skills del coding agent (`testing`, `mercanova-review`, `add-agent-tool`).
 
 ## Problemas comunes
 

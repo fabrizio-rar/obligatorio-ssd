@@ -20,7 +20,8 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [~] Agente (N9): loop + `POST /api/chat` (varios turnos, con login, sin streaming) + historial `GET /api/conversations` y `/{id}/messages` + 9 tools (`search_products`, `get_product`, `get_related_products`, `compare_products` y las 5 de carrito, nivel 3 con confirmación en la UI). Faltan `get_orders`, `get_order` y `start_checkout` (dependen del checkout, N6)
 - [~] Auth (N3) y catálogo (N4): backend listo (`/api/auth/*`, `/api/products`, `/api/products/{id}`, `/api/categories`, `/api/warehouses`); falta la UI
 - [~] Carrito (N5): backend + tools del agente listos (`domain/cart.py`, `/api/cart*`, `get_cart`/`add_to_cart`/`update_cart_item`/`remove_from_cart`/`clear_cart`); falta la UI
-- [ ] Resto del núcleo (N6, N7, N10–N14): ver `docs/PLAN.md` §20.1
+- [x] `AGENTS.md` + skills (N14): `testing`, `mercanova-review`, `add-agent-tool`
+- [ ] Resto del núcleo (N6, N7, N10–N13): ver `docs/PLAN.md` §20.1
 
 > Cuando se complete un ítem del núcleo, actualizá esta checklist **y** la columna "Estado" de `docs/PLAN.md` §20.1 en el mismo cambio.
 
@@ -161,6 +162,15 @@ docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-l
 - Antes de dar algo por terminado: `pytest` en verde y `ruff` sin errores.
 
 ## Cómo trabajar con un coding agent
+
+**Skills del proyecto** (`.claude/skills/`, versionadas; Claude Code las carga cuando la tarea coincide, o con `/nombre`):
+
+| Skill | Cuándo |
+|---|---|
+| `testing` | Al escribir o cambiar código del backend, y antes de dar una tarea por terminada |
+| `mercanova-review` | Antes de commitear, o para revisar un diff, commit o rango contra las reglas de este archivo |
+| `add-agent-tool` | Al agregar o cambiar una tool del agente |
+
 
 1. Leé la sección de `docs/PLAN.md` que corresponde a la tarea.
 2. Planificá antes de escribir código en tareas de más de un archivo.

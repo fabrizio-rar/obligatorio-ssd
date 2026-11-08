@@ -47,7 +47,7 @@
 | Voz | ⬜ N12 (§11) | — |
 | Frontend | ⬜ N1 (parte FE), N3–N7 y N11 (UI) | — |
 | Tests | ✅ 260 tests (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM`. Faltan los de la transacción de compra y concurrencia (N6) | `backend/tests/` |
-| Skills del coding agent | ⬜ `.claude/skills/` (N14) | — |
+| Skills del coding agent | ✅ `testing`, `mercanova-review`, `add-agent-tool` | `.claude/skills/` |
 
 ---
 
@@ -1143,7 +1143,8 @@ La letra pide *"una estrategia de testing adecuada a la arquitectura elegida y c
      - ¿hay tests?
      - ¿se filtran los productos inactivos?
   3. 🟡 `add-agent-tool` y alguna skill pública (sugerencia de Santiago).
-- **Evidencia para el PDF:** prompts enviados al agente y cómo se revisó el resultado.
+- **Implementado (08/11):** `.claude/skills/testing/`, `.claude/skills/mercanova-review/` (se llama así y no `code-review` para no chocar con la skill que Claude Code trae incorporada) y `.claude/skills/add-agent-tool/` (el procedimiento de las 9 tools, con las lecciones: el `$ref` del modo estricto, las reglas del prompt con ejemplo y el presupuesto de tokens).
+- **Evidencia para el PDF:** prompts enviados al agente y cómo se revisó el resultado. Primera corrida de `mercanova-review`: `docs/evidence/2026-11-08-review-skill.md` (encontró un error en la propia skill: un glob sin comillas que fallaba en zsh).
 
 ---
 
@@ -1222,7 +1223,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ⬜ |
 | N12 | Voz (faster-whisper + botón 🎤) | RF-08 | B + C | ⬜ |
 | N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | 🟡 dominio ✅, API ✅, agente con FakeLLM ✅ (260 tests); faltan transacción de compra y concurrencia (N6) |
-| N14 | `AGENTS.md` + 2 skills | §17 | Todos | 🟡 `AGENTS.md` + `CLAUDE.md` ✅ (al día); faltan las 2 skills en `.claude/skills/` |
+| N14 | `AGENTS.md` + 2 skills | §17 | Todos | ✅ `AGENTS.md` + `CLAUDE.md` + 3 skills (`testing`, `mercanova-review`, `add-agent-tool`) + evidencia en `docs/evidence/` |
 
 **Extras (en orden de prioridad; se cortan desde el final):**
 | # | Extra | Si no llega | Estado (08/11) |
