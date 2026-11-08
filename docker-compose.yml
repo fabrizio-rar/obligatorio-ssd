@@ -29,7 +29,19 @@ services:
       - ./reports:/app/reports
       - models_cache:/root/.cache # embedding and whisper models (downloaded once)
 
-  # frontend: added in a later step (N1, frontend part)
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    environment:
+      # Vite proxies /api to the backend service (the browser only talks to :5173)
+      VITE_API_URL: http://backend:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      # hot reload: edit src/ on the host; node_modules stays inside the container
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
 
 volumes:
   pgdata: {}

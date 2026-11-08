@@ -1178,7 +1178,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 **Núcleo (obligatorio; cubre todos los RF de la letra):**
 | # | Funcionalidad | Cubre | Responsable | Estado |
 |---|---|---|---|---|
-| N1 | Monorepo + `docker compose up` (db, backend, frontend) + `.env.example` | RNF-01/02/03/07 | C | 🟡 backend + db listos; falta frontend |
+| N1 | Monorepo + `docker compose up` (db, backend, frontend) + `.env.example` | RNF-01/02/03/07 | C | ✅ |
 | N2 | Ingesta de las 8 hojas + reporte | §8 | A | ✅ |
 | N3 | Login y register simples | — | A + C | ⬜ |
 | N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C | ⬜ |
