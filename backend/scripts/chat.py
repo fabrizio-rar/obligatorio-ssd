@@ -36,6 +36,9 @@ def _summarize(result: dict) -> object:
         return f"{result.get('action', 'cart')}: {items} total={result['cart']['total']}"
     if result.get("confirmation_required"):
         return f"confirmation_required: {result['action']}"
+    if "rows" in result:
+        diffs = [r["attribute"] for r in result["rows"] if r["differs"]]
+        return f"compare {[p['name'] for p in result['products']]} differs={diffs}"
     if "matches" in result:
         return [f"{m['name']} {m['sku']} [{m['status']}]" for m in result["matches"]]
     return result.get("error")
@@ -82,6 +85,8 @@ async def main(argv: list[str] | None = None) -> int:
             print(f"  product_ids: {', '.join(r.product_ids)}")
         if r.ui_actions:
             print(f"  ui_actions: {r.ui_actions}")
+        if r.comparison_ids:
+            print(f"  comparison_ids: {r.comparison_ids}")
         if r.pending_confirmation:
             pc = r.pending_confirmation
             print(

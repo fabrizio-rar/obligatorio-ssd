@@ -84,3 +84,27 @@ def test_model_cannot_smuggle_backend_fields():
     text = json.dumps({**json.loads(_answer()), "ui_actions": ["refresh_cart"]})
     response, error = parse_response([text])
     assert response is None and "ui_actions" in error  # extra="forbid"
+
+
+def _refs_with_siblings(node, path="$"):
+    if isinstance(node, dict):
+        if "$ref" in node and len(node) > 1:
+            yield path
+        for key, value in node.items():
+            yield from _refs_with_siblings(value, f"{path}.{key}")
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            yield from _refs_with_siblings(item, f"{path}[{i}]")
+
+
+def test_no_tool_schema_has_ref_with_sibling_keywords():
+    """OpenAI strict mode: '$ref cannot have keywords {description}' (found with the real API:
+    FakeLLM does not validate schemas). Checked for EVERY tool, present and future."""
+    from app.agent.tools import TOOLS
+
+    for tool in TOOLS.values():
+        schema = strict_json_schema(tool.args_model)
+        assert list(_refs_with_siblings(schema)) == [], tool.name
+        for obj in _objects(schema):
+            assert obj["required"] == list(obj["properties"]), tool.name
+    assert list(_refs_with_siblings(strict_json_schema(ModelResponse))) == []

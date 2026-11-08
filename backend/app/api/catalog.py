@@ -17,6 +17,7 @@ from app.domain.catalog import (
     RelationType,
     WarehouseOut,
 )
+from app.domain.comparison import Comparison, compare
 from app.domain.errors import DomainError
 from app.retrieval.vocabulary import Category
 
@@ -50,6 +51,15 @@ def list_products(
     return catalog.list_products(
         db, category.value if category else None, page=page, page_size=page_size
     )
+
+
+@router.get("/products/compare", response_model=Comparison)
+def compare_products(
+    db: Db,
+    ids: Annotated[str, Query(description="2 to 4 comma-separated IDs, same category")],
+):
+    """The comparison table (same function as the agent's compare_products tool)."""
+    return compare(db, [i for i in ids.split(",") if i.strip()])
 
 
 @router.get("/products/{product_id}", response_model=ProductDetailOut)

@@ -1,8 +1,7 @@
 # Plan: tools `get_related_products` y `compare_products` (N9)
 
-> Estado: **pendiente** (plan aprobado para hacer después). Escrito el 08/11/2026.
-> **Avance:** el dominio de `get_related()` ya está hecho (`domain/catalog.py`, lo usa `GET /api/products/{id}`), con tests de dirección y filtrado. Falta: la tool `get_related_products`, todo `compare_products`, `AgentResponse.comparison_ids`, el prompt y los tests del agente.
-> Contexto: `docs/PLAN.md` §10.4 (tools), §10.6 (`AgentResponse`), §10.9.1 (estado de N9).
+> Estado: **✅ implementado (08/11/2026)**. Ver `docs/PLAN.md` §10.4 y §10.9.1 para los resultados reales.
+> Cambios respecto de este plan: `comparison_ids` lo llena el **backend** (no el modelo) desde el resultado de `compare_products`; se agregó `GET /api/products/compare?ids=` para la tabla de la UI; las filas devuelven `values` en una lista alineada con `products` (no un dict por nombre: hay nombres repetidos).
 
 ## Para qué sirve cada una
 

@@ -26,9 +26,12 @@ from app.domain.cart import CartView
 from app.domain.catalog import (
     ProductDetail,
     ProductStatus,
+    RelationType,
     find_products_by_name,
     get_product_detail,
+    get_related,
 )
+from app.domain.comparison import MAX_PRODUCTS, MIN_PRODUCTS, compare
 from app.domain.errors import DomainError
 from app.retrieval.embeddings import Embedder
 from app.retrieval.search import SearchQuery, search
@@ -64,6 +67,7 @@ class ToolExecution:
     product_ids: list[str] = field(default_factory=list)  # products the model has now "seen"
     ui_actions: list[UiAction] = field(default_factory=list)
     pending_confirmation: PendingAction | None = None  # set -> the turn stops here
+    comparison_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -76,6 +80,7 @@ class ToolOutcome:
     # Filled by the backend from what the tool did, never by the model (§10.6)
     ui_actions: list[UiAction] = field(default_factory=list)
     pending_confirmation: PendingAction | None = None
+    comparison_ids: list[str] = field(default_factory=list)
 
 
 # --- search_products ------------------------------------------------------------------------
@@ -378,6 +383,89 @@ CART_DESCRIPTIONS = {
 }
 
 
+# --- get_related_products / compare_products ---------------------------------------------------
+
+
+class RelatedArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str = Field(description="Product ID from a previous tool result.")
+    relation_type: RelationType = Field(
+        description="alternative_to: the product has no stock, is discontinued, or the user "
+        "wants similar options. accessory_for: complements for a product the user chose. "
+        "often_bought_with: what is usually bought together."
+    )
+    in_stock_only: bool = Field(description="true to offer them (the usual case).")
+
+
+RELATED_DESCRIPTION = (
+    "Products related to ONE product, curated in the catalog (better than a new search for "
+    "'something similar'). Returns active products with CURRENT price and stock, best match "
+    "first, and how many were filtered out (inactive / out of stock). Each product has at "
+    "most 2 relations per type: if fewer remain than you need, complete with search_products."
+)
+
+
+def _get_related(ctx: ToolContext, args: RelatedArgs) -> ToolOutcome:
+    result = get_related(ctx.session, args.product_id, args.relation_type, args.in_stock_only)
+    data = {
+        "ok": True,
+        "relation_type": args.relation_type.value,
+        "products": [
+            {
+                "product_id": r.product_id,
+                "name": r.name,
+                "sku": r.sku,
+                "category": f"{r.category} > {r.subcategory}",
+                "price": f"{r.currency} {r.current_price}",
+                "stock": r.available,
+                "rating": str(r.rating) if r.rating is not None else None,
+                "strength": str(r.strength) if r.strength is not None else None,
+            }
+            for r in result.items
+        ],
+        "filtered_out": result.filtered_out,
+    }
+    return ToolOutcome(data, [r.product_id for r in result.items])
+
+
+class CompareArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_ids: list[str] = Field(
+        description="2 to 4 product IDs from previous tool results, SAME category.",
+        min_length=MIN_PRODUCTS,
+        max_length=MAX_PRODUCTS,
+    )
+
+
+COMPARE_DESCRIPTION = (
+    "Side-by-side table of 2-4 products of the same category: price, discount, rating, "
+    "stock, warranty, return days and every spec. Rows that differ come first "
+    "(differs=true). Use it when the user hesitates between products or asks which is "
+    "better. Explain the 2-3 differences that matter for the user's need; do not recite "
+    "the table (the UI shows it)."
+)
+
+
+def _compare_products(ctx: ToolContext, args: CompareArgs) -> ToolOutcome:
+    comparison = compare(ctx.session, args.product_ids)
+    rows = sorted(comparison.rows, key=lambda r: not r.differs)  # stable: differing first
+    data = {
+        "ok": True,
+        "category": comparison.category,
+        "products": [
+            {"product_id": p.product_id, "name": p.name, "sku": p.sku} for p in comparison.products
+        ],
+        # values[i] belongs to products[i] (names can repeat: never key by name)
+        "rows": [
+            {"attribute": r.attribute, "differs": r.differs, "values": r.values} for r in rows
+        ],
+    }
+    ids = [p.product_id for p in comparison.products]
+    return ToolOutcome(data, ids, comparison_ids=ids)
+
+
 # --- Registry ---------------------------------------------------------------------------------
 
 
@@ -395,6 +483,12 @@ TOOLS: dict[str, Tool] = {
     ),
     "get_product": Tool(
         "get_product", GetProductArgs, lambda _session: GET_PRODUCT_DESCRIPTION, _get_product
+    ),
+    "get_related_products": Tool(
+        "get_related_products", RelatedArgs, lambda _session: RELATED_DESCRIPTION, _get_related
+    ),
+    "compare_products": Tool(
+        "compare_products", CompareArgs, lambda _session: COMPARE_DESCRIPTION, _compare_products
     ),
     **{
         name: Tool(name, args, lambda _session, n=name: CART_DESCRIPTIONS[n], run)
@@ -448,6 +542,7 @@ def execute_tool(ctx: ToolContext, call: ToolCall) -> ToolExecution:
             product_ids=outcome.product_ids if outcome else [],
             ui_actions=outcome.ui_actions if outcome else [],
             pending_confirmation=outcome.pending_confirmation if outcome else None,
+            comparison_ids=outcome.comparison_ids if outcome else [],
         )
 
     tool = TOOLS.get(call.name)
