@@ -19,8 +19,13 @@ class Settings(BaseSettings):
     dataset_path: Path = Path("data/raw/MercaNova_dataset_obligatorio_2.xlsx")
     ingest_report_path: Path = Path("reports/ingest_report.json")
 
+    # Auth (docs/PLAN.md §7.2, §12)
+    auth_token_ttl_hours: int = Field(default=72, gt=0)
+    seed_demo_user: bool = True
+
     # OpenAI: optional so the app starts without it (chat and semantic search are disabled)
     openai_api_key: SecretStr | None = None
+    llm_provider: Literal["openai"] = "openai"  # the only adapter implemented
     llm_model: str = "gpt-6-luna"
     llm_reasoning_effort: Literal["none", "low", "medium", "high"] = "low"
     llm_timeout_seconds: float = 60

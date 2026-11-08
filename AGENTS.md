@@ -17,8 +17,10 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [x] Esqueleto del monorepo + Docker (N1): `db`, `backend` y `frontend` (Vite en `:5173`, proxy `/api` → backend); el frontend ya tiene el chat conectado a `POST /api/chat`. Catálogo, carrito, checkout y órdenes llegan con sus endpoints
 - [x] Ingesta del Excel (N2): 8 hojas + reporte en `reports/ingest_report.json`. Los embeddings (paso 5) se suman con N8 y el usuario demo (paso 6) con N3
 - [x] Búsqueda (N8): embeddings en `product_embeddings` (`scripts.index_embeddings`) + `retrieval/search.py` (filtros SQL + vectorial + usos como señal, RRF). La conecta al agente N9
-- [~] Agente (N9): loop + `POST /api/chat` (varios turnos, sin login ni streaming) + tool `search_products`. Faltan `get_product`, `compare_products`, `get_related_products` y las de carrito/órdenes/checkout (ver `docs/PLAN.md` §10.9.1)
-- [ ] Resto del núcleo (N3–N7, N10–N14): ver `docs/PLAN.md` §20.1
+- [~] Agente (N9): loop + `POST /api/chat` (varios turnos, con login, sin streaming) + historial `GET /api/conversations` y `/{id}/messages` + tools `search_products` y `get_product`. Faltan `compare_products`, `get_related_products` y las de carrito/órdenes/checkout (ver `docs/PLAN.md` §10.9.1)
+- [~] Auth (N3) y catálogo (N4): backend listo (`/api/auth/*`, `/api/products`, `/api/products/{id}`, `/api/categories`, `/api/warehouses`); falta la UI
+- [~] Carrito (N5): backend listo (`domain/cart.py` + `/api/cart*`); faltan las tools del agente (`get_cart`, `add_to_cart`, `update_cart_item`, `remove`/`clear` con confirmación) y la UI
+- [ ] Resto del núcleo (N6, N7, N10–N14): ver `docs/PLAN.md` §20.1
 
 > Cuando se complete un ítem del núcleo, actualizá esta checklist **y** la columna "Estado" de `docs/PLAN.md` §20.1 en el mismo cambio.
 
@@ -51,7 +53,7 @@ AGENTS.md  CLAUDE.md  README.md  docker-compose.yml  .env.example
 data/raw/              # dataset Excel de la cátedra
 backend/app/
   api/                 # routers FastAPI: solo HTTP, sin lógica de negocio
-  auth/                # register, login, current_user
+  auth/                # service (register, login, tokens con hash), dependencies (current_user)
   domain/              # lógica de negocio PURA: catalog, inventory, cart, checkout, errors
   retrieval/           # document_builder, embeddings, indexer, search (híbrida), vocabulary (+ vocabulary_data/*.json)
   agent/               # llm/, tools.py, prompts/, response_schema.py, state.py, guardrails.py, loop.py
@@ -70,7 +72,7 @@ cp .env.example .env          # OPENAI_API_KEY: opcional para levantar; la usan 
 docker compose up --build
 ```
 
-Eso alcanza para tener la base cargada. **No hace falta correr migraciones ni la ingesta a mano**: el `entrypoint.sh` del backend ejecuta en orden `alembic upgrade head` → `python -m scripts.ingest --if-empty` → `python -m scripts.index_embeddings` → `uvicorn`. Sin `OPENAI_API_KEY` el paso de embeddings se saltea; si falla, la API arranca igual.
+Eso alcanza para tener la base cargada. **No hace falta correr migraciones ni la ingesta a mano**: el `entrypoint.sh` del backend ejecuta en orden `alembic upgrade head` → `python -m scripts.ingest --if-empty` → `python -m scripts.seed_demo_user` (usuario **`demo` / `demo1234`**) → `python -m scripts.index_embeddings` → `uvicorn`. Sin `OPENAI_API_KEY` el paso de embeddings se saltea; si falla, la API arranca igual.
 
 - Verificar: `curl localhost:8000/api/health` → `{"status":"ok","db":"ok",...}`. Tiene que haber 360 filas en `products`.
 - La ingesta escribe `reports/ingest_report.json` (ignorado por git). Hallazgos esperados: 0 filas rechazadas, 17 inactivos, 22 sin stock, 3 nombres duplicados y 37 specs vacías ("N/D").
@@ -96,7 +98,9 @@ docker compose exec backend python -m scripts.index_embeddings [--force]   # emb
 docker compose exec backend python -m scripts.index_embeddings --query "auriculares para videollamadas"   # debug: top 5
 docker compose exec backend python -m scripts.search "headphones for video calls" --category Headphones --max-price 200 --use calls   # búsqueda real, con los args del agente
 docker compose exec backend python -m scripts.chat --verbose "busco auriculares hasta 200" [--conversation <id>]   # chat real (~USD 0,001 por turno)
-curl -X POST localhost:8000/api/chat -H 'Content-Type: application/json' -d '{"message": "busco auriculares"}'
+TOKEN=$(curl -s -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' -d '{"username":"demo","password":"demo1234"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+curl -X POST localhost:8000/api/chat -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"message": "busco auriculares"}'   # el chat requiere login
+docker compose exec backend python -m scripts.seed_demo_user   # crea demo/demo1234 si falta (idempotente)
 docker compose exec backend pytest                 # tests (sin evals); los de integración usan TEST_DATABASE_URL
 docker compose exec backend ruff check . && docker compose exec backend ruff format --check .
 docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-luna (gasta créditos: correr a mano)

@@ -366,13 +366,13 @@ Vista `product_availability`: `product_id`, `SUM(available_qty) AS available`, e
 | Tabla | Campos | Notas |
 |---|---|---|
 | `users` | `id`, `username UNIQUE`, `password_hash`, `created_at` | bcrypt. Usuario `demo` creado por el seed |
-| `auth_tokens` | `token PK` (random 32 bytes), `user_id`, `created_at`, `expires_at` | Logout = borrar el token |
-| `carts` | `id`, `user_id UNIQUE`, `updated_at` | Un carrito activo por usuario |
-| `cart_items` | `cart_id`, `product_id`, `quantity CHECK (>0)` | Sin precio: se lee el actual |
+| `auth_tokens` | `token_hash PK` (SHA-256 del token aleatorio de 32 bytes), `user_id`, `created_at`, `expires_at` | **Solo se guarda el hash:** quien lea la DB no puede usar los tokens. Logout = borrar la fila |
+| `carts` | `id`, `user_id UNIQUE`, `updated_at` | Un carrito activo por usuario; se crea al agregar el primer ítem |
+| `cart_items` | `cart_id`, `product_id` (PK compuesta), `quantity CHECK (>0)`, `added_at` | Sin precio: se lee el actual. Máx. `MAX_QUANTITY_PER_ITEM` = 10 por producto (dominio). Un producto que se desactiva o se queda sin stock **no se borra en silencio**: el carrito lo marca (`issues`: `INACTIVE` / `OUT_OF_STOCK` / `INSUFFICIENT_STOCK`) y `can_checkout` pasa a `false` |
 | `orders` | `id`, `code` (`MN-ORD-000123`), `user_id`, `status`, `customer_name`, `email`, `delivery_method`, `shipping_address`, `pickup_warehouse_id`, `payment_method`, `subtotal`, `total`, `created_at`, `confirmed_at` | `status ∈ {PENDING_CONFIRMATION, CONFIRMED, CANCELLED}`; `delivery_method ∈ {SHIPPING, PICKUP}`. `CHECK`: si es `SHIPPING`, la dirección no puede ser nula; si es `PICKUP`, la sucursal no puede ser nula |
 | `order_items` | `order_id`, `product_id`, `product_name`, `sku`, `unit_price`, `quantity`, `line_total` | Nombre y precio **congelados** |
 | `order_item_allocations` | `order_item_id`, `warehouse_id`, `quantity` | De qué sucursal salió cada unidad. Con retiro es siempre la sucursal elegida; con envío puede repartirse entre varias. Evidencia de RF-15 |
-| `conversations` | `id`, `user_id`, `title`, `created_at` | Botón "Nueva conversación" |
+| `conversations` | `id`, `user_id`, `title`, `created_at` | Botón "Nueva conversación". `user_id` nullable solo por las conversaciones previas al login (migración 0004); la API siempre filtra por el usuario del token |
 | `chat_messages` | `id`, `conversation_id`, `role`, `content`, `structured JSONB`, `created_at` | |
 | `agent_state` | `conversation_id PK`, `state JSONB` | §10.5 |
 | `tool_call_logs` | `message_id`, `step`, `tool_name`, `arguments`, `result`, `is_error`, `latency_ms` | Panel "ver tools usadas" y evidencia para el PDF |
@@ -399,7 +399,7 @@ Vista `product_availability`: `product_id`, `SUM(available_qty) AS available`, e
               → specs → warehouses → inventory → relations   (upsert por clave natural, 1 transacción)
 5. Indexar    document_builder → hash → embed solo si cambió → upsert product_embeddings
               (comando aparte: `python -m scripts.index_embeddings`, ver §9.3)
-6. Seed       usuario demo (si SEED_DEMO_USER)
+6. Seed       usuario demo (si SEED_DEMO_USER) → `python -m scripts.seed_demo_user` (lo corre el entrypoint)
 7. Reportar   por hoja: leídas / insertadas / actualizadas / rechazadas (+ motivos)
 ```
 
@@ -584,7 +584,7 @@ Principios: pocas, con nombres y descripciones claros; parámetros tipados con P
 | Tool | Parámetros | Devuelve | Efecto |
 |---|---|---|---|
 | `search_products` | Ver §9.5 | Lista con precio y stock actuales | Lectura |
-| `get_product` | `product_id` | Ficha + specs + precio + stock total y **por sucursal** (responde "¿lo puedo retirar en Colonia?") | Lectura |
+| `get_product` | `product_id` **o** `name` (exactamente uno) | Ficha + specs + precio + stock total y **por sucursal** (responde "¿lo puedo retirar en Colonia?"). Por `name` encuentra también **inactivos** → `status: discontinued` sin precio ni stock; con nombres duplicados devuelve las coincidencias para desambiguar | Lectura |
 | `compare_products` | `product_ids[2..4]` | Specs alineadas por atributo, precio, stock y rating | Lectura |
 | `get_related_products` | `product_id`, `relation_type` (`alternative_to` / `accessory_for` / `often_bought_with`) | Relacionados activos con stock | Lectura |
 | `get_cart` | — | Ítems, subtotales, total | Lectura |
@@ -766,14 +766,14 @@ async def run_turn(user, conversation_id, text) -> AsyncIterator[Event]:
 - Los resultados de las tools son datos, no instrucciones.
 
 ### 10.9.1 Estado de la implementación (N9, primera etapa, 08/11)
-- **Hecho:** `POST /api/chat` `{message, conversation_id?}` → `{conversation_id, response: AgentResponse, meta}`. Sin login por ahora (llega con N3) y **sin streaming** (SSE es E2). Varios turnos: historial en `chat_messages` (últimos `AGENT_HISTORY_MESSAGES`), estado en `agent_state` (`seen_product_ids`, `last_shown`, `last_turn`) y cada tool call en `tool_call_logs`.
-- **Tools:** por ahora solo `search_products` (llama a `retrieval/search.py`). Su descripción se genera con las categorías del JSON y `use_case_categories()` de la DB.
+- **Hecho:** `POST /api/chat` `{message, conversation_id?}` → `{conversation_id, response: AgentResponse, meta}`. **Requiere login** desde N3 (`Authorization: Bearer`); cada conversación es de su usuario. **Sin streaming** (SSE es E2). Varios turnos: historial en `chat_messages` (últimos `AGENT_HISTORY_MESSAGES`), estado en `agent_state` (`seen_product_ids`, `last_shown`, `last_turn`) y cada tool call en `tool_call_logs`.
+- **Tools:** `search_products` (llama a `retrieval/search.py`; descripción generada con las categorías del JSON y `use_case_categories()` de la DB) y `get_product` (llama a `domain/catalog.py`: `find_products_by_name()` + `get_product_detail()`, que va a reusar `GET /api/products/{id}` en N4). Cada tool declara qué productos pueden mostrarse como tarjeta (`ToolOutcome.product_ids`): un discontinuado nunca.
 - **Código:** `agent/llm/` (`LLMProvider`, `OpenAIResponsesProvider`, `FakeLLM`, `schema.py` para el schema estricto propio), `agent/tools.py` (pipeline de 3 etapas), `agent/loop.py` (stop conditions: goal_reached, max_steps, budget, loop, format), `agent/guardrails.py`, `agent/state.py`, `agent/service.py` (turno todo-o-nada), `agent/prompts/system.md`.
 - **Pasos dentro de un turno** encadenados con `previous_response_id` (`store=True`): OpenAI conserva los items de razonamiento entre la llamada a la tool y su resultado; entre turnos el historial lo mandamos nosotros.
 - **`AgentResponse` reducido** a `type` (recommendation / clarification / info / error), `message`, `product_ids`, `clarifying_question`, `suggested_replies`. Los campos de carrito, comparación y checkout se suman con sus tools.
 - **Probar:** `python -m scripts.chat --verbose "..." [--conversation <id>]` o `curl -X POST localhost:8000/api/chat -H 'Content-Type: application/json' -d '{"message": "..."}'`.
 - **Pruebas reales con `gpt-6-luna` (08/11):** auriculares ≤ 200 → 3 recomendaciones con la categoría y el precio correctos, y aclara que el catálogo no informa comodidad. "Quiero algo bueno" → aclaración sin buscar. Nimbus Sound 691 → "sin stock" y ofrece alternativas. Kairo Drive Pro 2TB → muestra los 2 SKU y pregunta. "El segundo" en el turno 3 → resuelve bien la referencia. Pedido de carrito → dice que todavía no puede, sin fingir. Off-topic e injection → vuelve al tema. ~5–10 s y ~USD 0,0007 por turno (4,5–7 mil tokens de entrada, sobre todo la descripción de la tool y los resultados).
-- **Pendiente detectado:** "Quiero los Cedar Air 243" (inactivo) → no lo encuentra (la búsqueda nunca devuelve inactivos) y sugiere otra cosa en lugar de decir "discontinuado". Se resuelve con `get_product` / búsqueda por nombre que informe el estado, siguiente paso de N9.
+- **`get_product` (08/11, real):** Cedar Air 243 → "está discontinuado y ya no se vende" + ofrece alternativas de auriculares (antes sugería una tablet). "¿Lo retiro en Colonia?" (Vector Air 690) → "en Colonia no hay; Canelones 2, Maldonado 5, Este 6" (coincide con la DB). "¿Tiene ANC?" → "No, tiene aislamiento pasivo". Kairo Drive Pro 2TB → pregunta por SKU. A veces el modelo hace `search_products` antes de `get_product` para un nombre (un paso de más, ~11 mil tokens): ajustable en el prompt si las evals lo muestran.
 
 ### 10.10 Skills de la aplicación (🟡 opcional)
 Markdown con instrucciones por tarea (`compare.md`, `checkout.md`, `clarify.md`) que se cargan solo cuando hacen falta. Mantienen corto el system prompt, lo que ayuda a un modelo chico, y suman el concepto de "Skills".
@@ -811,11 +811,11 @@ sequenceDiagram
 | POST | `/api/auth/login` | — | → `{token, user}` |
 | POST | `/api/auth/logout` | ✔ | Borra el token |
 | GET | `/api/auth/me` | ✔ | |
-| GET | `/api/products?q=&category=&subcategory=&brand=&min_price=&max_price=&in_stock=&page=` | — | Catálogo y búsqueda (`q` usa la búsqueda híbrida) |
-| GET | `/api/products/{id}` | — | Detalle + specs + stock por sucursal + relacionados |
-| GET | `/api/products?ids=a,b,c` | — | Para las tarjetas del chat |
+| GET | `/api/products?category=&page=&page_size=` | — | Catálogo paginado, **solo activos**. Sin `q` ni otros filtros: **la búsqueda es solo por chat** (§9.5); más filtros, si hacen falta, después |
+| GET | `/api/products/{id}` | — | Detalle + specs + stock por sucursal + `alternatives` / `accessories` / `often_bought_with` (activos y con stock). Inactivo → `status: discontinued`, sin precio ni stock, solo alternativas. Usa `domain/catalog.py`, igual que la tool `get_product` |
+| GET | `/api/products?ids=a,b,c` | — | Para las tarjetas del chat (máx. 20, en el mismo orden; omite inactivos e inexistentes). No se combina con `category` |
 | GET | `/api/categories` | — | |
-| GET/POST/PATCH/DELETE | `/api/cart`, `/api/cart/items[/{product_id}]` | ✔ | Carrito (las mutaciones devuelven `undo_token`) |
+| GET/POST/PATCH/DELETE | `/api/cart`, `/api/cart/items[/{product_id}]` | ✔ | Carrito. Cada mutación devuelve el carrito actualizado (`items` con precio y stock actuales, `item_count`, `total`, `can_checkout`). Errores: 404 `NOT_FOUND` / `NOT_IN_CART`, 409 `INACTIVE` / `OUT_OF_STOCK` (con `available` e `in_cart`), 422 cantidad inválida. 🟡 `undo_token` llega con E3 |
 | DELETE | `/api/cart` | ✔ | Vaciar carrito (lo usa el botón de confirmación de nivel 3) |
 | POST | `/api/cart/undo/{token}` | ✔ | Deshacer el último cambio |
 | GET | `/api/warehouses` | — | Sucursales (para el detalle de producto y el checkout) |
@@ -824,13 +824,15 @@ sequenceDiagram
 | POST | `/api/orders/{id}/confirm` | ✔ | **Transacción de compra** |
 | POST | `/api/orders/{id}/cancel` | ✔ | |
 | GET | `/api/orders`, `/api/orders/{code}` | ✔ | Historial |
-| GET/POST | `/api/conversations` | ✔ | Listar y crear |
-| GET | `/api/conversations/{id}/messages` | ✔ | Rehidratar el chat |
+| GET | `/api/conversations?limit=&offset=` | ✔ | Las conversaciones del usuario, por última actividad, con `message_count` y vista previa del último mensaje. **No hay `POST`:** `POST /api/chat` sin `conversation_id` crea la conversación (botón "Nueva conversación" = mandar `null`) |
+| GET | `/api/conversations/{id}/messages` | ✔ | Rehidratar el chat: mensajes en orden; los del asistente traen `response` (`type`, `product_ids` para las tarjetas, `suggested_replies`) y `tools` (paso, tool, argumentos, error, latencia) para el panel "ver tools usadas". La de otro usuario → 404 |
 | POST | `/api/chat/stream` | ✔ | `{conversation_id, message}` → SSE |
 | POST | `/api/transcribe` | ✔ | Audio multipart → `{text}` |
 | GET | `/api/health` | — | DB, LLM y STT |
 
 `Authorization: Bearer <token>`. El catálogo es público; carrito, órdenes y chat requieren login.
+**Errores:** todo `DomainError` sale con `{"ok": false, "error": {code, message, details}}` desde un único handler (`api/errors.py`): 401 `UNAUTHORIZED` / `INVALID_CREDENTIALS` (mismo mensaje para usuario inexistente y contraseña mal), 404 `NOT_FOUND` / `CONVERSATION_NOT_FOUND` (la conversación de otro usuario también da 404), 409 `USERNAME_TAKEN`, 422 `INVALID_INPUT`.
+**Implementado (08/11):** historial de conversaciones (`agent/conversations.py` + `/api/conversations*`), carrito (`domain/cart.py` + `/api/cart*`), auth (`register`, `login`, `logout`, `me`), catálogo (`/products`, `/products/{id}`, `/products?ids=`, `/categories`, `/warehouses`) y `POST /api/chat` con login. Usuario `demo` / `demo1234` creado en el arranque (`scripts.seed_demo_user`).
 
 ### 12.1 Transacción de confirmación
 ```sql
@@ -1180,13 +1182,13 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 |---|---|---|---|---|
 | N1 | Monorepo + `docker compose up` (db, backend, frontend) + `.env.example` | RNF-01/02/03/07 | C | ✅ |
 | N2 | Ingesta de las 8 hojas + reporte | §8 | A | ✅ |
-| N3 | Login y register simples | — | A + C | ⬜ |
-| N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C | ⬜ |
-| N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C | ⬜ |
+| N3 | Login y register simples | — | A + C | 🟡 backend ✅ (token con hash, demo seed); falta la UI |
+| N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C | 🟡 backend ✅ (`/products`, detalle con relacionados, `/categories`, `/warehouses`); falta la UI |
+| N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C | 🟡 backend ✅ (`domain/cart.py` + `/api/cart*`, validación suave contra el stock total); faltan las tools del agente y la UI |
 | N6 | Checkout con **envío y retiro** + modal de confirmación (acción, productos, cantidades, precios, total) + transacción con **revalidación de precio, stock y activo** + asignación por sucursal | RF-11..15 | A + C | ⬜ |
 | N7 | Historial de órdenes | RF-16 | A + C | ⬜ |
 | N8 | Búsqueda: filtros SQL + **vectorial** (embeddings multilingües) | RF-02 | B | ✅ `retrieval/search.py` (la tool la conecta N9) |
-| N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | 🟡 loop + `POST /api/chat` + `search_products` (§10.9.1); faltan las demás tools |
+| N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | 🟡 loop + `POST /api/chat` + `search_products` + `get_product` (§10.9.1); faltan `compare_products`, `get_related_products` y carrito/órdenes/checkout |
 | N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B | ⬜ |
 | N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ⬜ |
 | N12 | Voz (faster-whisper + botón 🎤) | RF-08 | B + C | ⬜ |

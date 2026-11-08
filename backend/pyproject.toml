@@ -18,6 +18,8 @@ dependencies = [
     "openai>=1.60",
     # VECTOR column type for SQLAlchemy (pgvector extension)
     "pgvector>=0.3",
+    # Password hashing (AGENTS.md: passwords stored with bcrypt)
+    "bcrypt>=4.2",
 ]
 
 [dependency-groups]

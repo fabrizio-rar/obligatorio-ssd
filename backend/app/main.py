@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 
-from app.api import chat, health
+from app.api import auth, cart, catalog, chat, conversations, health
+from app.api.errors import register_error_handlers
 
 app = FastAPI(title="MercaNova API")
-app.include_router(health.router, prefix="/api")
-app.include_router(chat.router, prefix="/api")
+register_error_handlers(app)
+for module in (health, auth, catalog, cart, chat, conversations):
+    app.include_router(module.router, prefix="/api")

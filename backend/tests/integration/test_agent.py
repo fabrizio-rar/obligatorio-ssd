@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,11 +18,12 @@ from app.agent.service import chat_turn
 from app.agent.state import AgentState
 from app.agent.tools import ToolContext
 from app.api.chat import get_llm, get_query_embedder
+from app.auth import service as auth
 from app.config import Settings
 from app.db import get_db
 from app.domain.errors import DomainError
 from app.main import app
-from app.models import ChatMessage, Conversation, Product, ToolCallLog
+from app.models import ChatMessage, Conversation, Product, ToolCallLog, User
 from app.models.retrieval import EMBEDDING_COLUMN_DIM
 from app.retrieval.embeddings import FakeEmbedder
 
@@ -86,7 +88,7 @@ def test_search_then_recommend(db):
 
     first, second = llm.requests
     assert first["input_messages"][-1] == {"role": "user", "content": "busco auriculares"}
-    assert [t.name for t in first["tools"]] == ["search_products"]
+    assert [t.name for t in first["tools"]] == ["search_products", "get_product"]
     assert "calls -> " in first["tools"][0].description  # use cases per category
     # Second step: only the tool output, chained to the previous response
     assert second["input_messages"] is None
@@ -223,7 +225,105 @@ def test_previous_products_are_summarized_in_the_instructions(db):
     assert "1) " in instructions and ids[0] in instructions and ids[1] in instructions
 
 
+# --- get_product ------------------------------------------------------------------------------
+
+
+def _get(name=None, product_id=None):
+    return {"name": name, "product_id": product_id}
+
+
+def test_get_product_by_name_returns_full_sheet(db):
+    llm = FakeLLM(
+        [tool_call("get_product", _get(name="Vector Air 690")), final(_answer(type_="info"))]
+    )
+    turn = _run(db, llm, text="¿Lo puedo retirar en Colonia?")
+
+    execution = turn.tool_executions[0][1]
+    product = execution.result["product"]
+    assert product["status"] == "available"
+    assert product["price"].startswith("USD ")
+    colonia = next(w for w in product["stock_by_warehouse"] if w["warehouse_id"] == "WH-COL-001")
+    assert colonia["available"] == 0
+    assert "Active Noise Cancellation: No" in product["specs"]
+    assert execution.product_ids == [product["product_id"]]
+
+
+def test_discontinued_then_alternatives(db):
+    cedar = db.scalar(select(Product.id).where(Product.name == "Cedar Air 243"))
+
+    def answer(request):
+        alternatives = json.loads(request["tool_outputs"][0].output)["products"]
+        return final(
+            _answer(
+                [cedar, *[p["product_id"] for p in alternatives]],
+                message="Está discontinuado; te muestro alternativas",
+            )
+        )
+
+    llm = FakeLLM(
+        [
+            tool_call("get_product", _get(name="Cedar Air 243")),
+            tool_call("search_products", dict(SEARCH, query="headphones"), call_id="c2"),
+            answer,
+        ]
+    )
+    turn = _run(db, llm, text="Quiero los Cedar Air 243")
+
+    first = turn.tool_executions[0][1]
+    assert first.result["product"]["status"] == "discontinued"
+    assert "price" not in first.result["product"]
+    assert first.product_ids == []  # never becomes a card
+    assert cedar not in turn.response.product_ids
+    assert cedar in turn.dropped_product_ids
+    assert len(turn.response.product_ids) == 3  # the alternatives
+
+
+def test_get_product_duplicate_names_are_listed(db):
+    llm = FakeLLM(
+        [
+            tool_call("get_product", _get(name="Kairo Drive Pro 2TB")),
+            final(_answer(type_="clarification")),
+        ]
+    )
+    execution = _run(db, llm).tool_executions[0][1]
+    assert execution.result["ambiguous"] is True
+    assert len(execution.result["matches"]) == 2
+    assert len(execution.product_ids) == 2
+
+
+@pytest.mark.parametrize(
+    ("arguments", "code"),
+    [
+        (_get(), "INVALID_ARGUMENTS"),  # neither
+        (_get(name="Vector Air 690", product_id="MN-HDP-0004"), "INVALID_ARGUMENTS"),  # both
+        (_get(product_id="MN-XXX-0000"), "NOT_FOUND"),
+        (_get(name="Producto Inexistente 9000"), "NOT_FOUND"),
+    ],
+)
+def test_get_product_errors(db, arguments, code):
+    llm = FakeLLM([tool_call("get_product", arguments), final(_answer(type_="info"))])
+    execution = _run(db, llm).tool_executions[0][1]
+    assert execution.is_error
+    assert execution.result["error"]["code"] == code
+
+
+def test_both_tools_are_offered(db):
+    llm = FakeLLM([final(_answer(type_="info"))])
+    _run(db, llm)
+    assert [t.name for t in llm.requests[0]["tools"]] == ["search_products", "get_product"]
+
+
 # --- Service: conversation persistence ----------------------------------------------------------
+
+
+def _owner(db: Session) -> int:
+    """The user that owns the conversations of these tests (the token gives it in the API)."""
+    user = db.scalar(select(User).where(User.username == "agent_tester"))
+    return (user or auth.register(db, "agent_tester", "secret123")).id
+
+
+def _chat_turn(db, *args, **kwargs):
+    return chat_turn(db, *args, user_id=_owner(db), **kwargs)
 
 
 def _settings(**overrides) -> Settings:
@@ -232,7 +332,7 @@ def _settings(**overrides) -> Settings:
 
 def test_turns_are_persisted_with_history_and_tool_logs(db):
     llm = FakeLLM([tool_call("search_products", SEARCH), _recommend_from_search])
-    first = asyncio.run(chat_turn(db, llm, EMBEDDER, _settings(), "busco auriculares"))
+    first = asyncio.run(_chat_turn(db, llm, EMBEDDER, _settings(), "busco auriculares"))
 
     messages = db.scalars(
         select(ChatMessage).where(ChatMessage.conversation_id == first.conversation_id)
@@ -248,7 +348,7 @@ def test_turns_are_persisted_with_history_and_tool_logs(db):
     # Second turn: history goes to the model, state remembers what was shown
     llm2 = FakeLLM([final(_answer(first.response.product_ids[:1], message="El primero"))])
     second = asyncio.run(
-        chat_turn(db, llm2, EMBEDDER, _settings(), "y el primero?", first.conversation_id)
+        _chat_turn(db, llm2, EMBEDDER, _settings(), "y el primero?", first.conversation_id)
     )
     sent = llm2.requests[0]["input_messages"]
     assert sent[0] == {"role": "user", "content": "busco auriculares"}
@@ -260,10 +360,10 @@ def test_turns_are_persisted_with_history_and_tool_logs(db):
 
 def test_history_is_limited(db):
     llm = FakeLLM([final(_answer(type_="info"))] * 3)
-    turn = asyncio.run(chat_turn(db, llm, EMBEDDER, _settings(), "hola"))
+    turn = asyncio.run(_chat_turn(db, llm, EMBEDDER, _settings(), "hola"))
     for text in ("dos", "tres"):
         asyncio.run(
-            chat_turn(
+            _chat_turn(
                 db, llm, EMBEDDER, _settings(agent_history_messages=2), text, turn.conversation_id
             )
         )
@@ -274,15 +374,13 @@ def test_failed_turn_saves_nothing(db):
     before = db.scalar(select(func.count()).select_from(Conversation))
     llm = FakeLLM([LLMError("UNAVAILABLE", "down", retryable=True)])
     with pytest.raises(LLMError):
-        asyncio.run(chat_turn(db, llm, EMBEDDER, _settings(), "hola"))
+        asyncio.run(_chat_turn(db, llm, EMBEDDER, _settings(), "hola"))
     assert db.scalar(select(func.count()).select_from(Conversation)) == before
 
 
 def test_unknown_conversation(db):
-    import uuid
-
     with pytest.raises(DomainError) as info:
-        asyncio.run(chat_turn(db, FakeLLM([]), EMBEDDER, _settings(), "hola", uuid.uuid4()))
+        asyncio.run(_chat_turn(db, FakeLLM([]), EMBEDDER, _settings(), "hola", uuid.uuid4()))
     assert info.value.code == "CONVERSATION_NOT_FOUND"
 
 
@@ -295,7 +393,14 @@ def client(db):
         app.dependency_overrides[get_db] = lambda: db
         app.dependency_overrides[get_llm] = lambda: llm
         app.dependency_overrides[get_query_embedder] = lambda: EMBEDDER
-        return TestClient(app)
+        http = TestClient(app)
+        name = f"u{uuid.uuid4().hex[:10]}"
+        http.post("/api/auth/register", json={"username": name, "password": "secret123"})
+        token = http.post(
+            "/api/auth/login", json={"username": name, "password": "secret123"}
+        ).json()["token"]
+        http.headers["Authorization"] = f"Bearer {token}"
+        return http
 
     yield use
     app.dependency_overrides.clear()
@@ -350,3 +455,21 @@ def test_chat_llm_errors(client):
     response = broken.post("/api/chat", json={"message": "hola"})
     assert response.status_code == 502
     assert response.json()["error"]["details"]["retryable"] is False
+
+
+def test_chat_requires_login(client):
+    http = client(FakeLLM([]))
+    del http.headers["Authorization"]
+    response = http.post("/api/chat", json={"message": "hola"})
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+def test_cannot_continue_someone_elses_conversation(client):
+    alice = client(FakeLLM([final(_answer(type_="info"))]))
+    conversation = alice.post("/api/chat", json={"message": "hola"}).json()["conversation_id"]
+
+    bob = client(FakeLLM([]))  # new user, new token
+    response = bob.post("/api/chat", json={"message": "hola", "conversation_id": conversation})
+    assert response.status_code == 404  # looks like it does not exist: no info leak
+    assert response.json()["error"]["code"] == "CONVERSATION_NOT_FOUND"

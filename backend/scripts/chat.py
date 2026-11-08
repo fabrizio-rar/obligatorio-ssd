@@ -18,11 +18,22 @@ from sqlalchemy import select
 from app.agent.llm.base import LLMError
 from app.agent.llm.factory import get_llm_provider
 from app.agent.service import chat_turn
+from app.auth.service import DEMO_USERNAME
 from app.config import get_settings
 from app.db import get_session_factory
 from app.domain.errors import DomainError
-from app.models import ChatMessage, ToolCallLog
+from app.models import ChatMessage, ToolCallLog, User
 from app.retrieval.embeddings import get_embedder
+
+
+def _summarize(result: dict) -> object:
+    if "products" in result:
+        return [p["name"] for p in result["products"]]
+    if "product" in result:
+        return f"{result['product']['name']} [{result['product']['status']}]"
+    if "matches" in result:
+        return [f"{m['name']} {m['sku']} [{m['status']}]" for m in result["matches"]]
+    return result.get("error")
 
 
 async def main(argv: list[str] | None = None) -> int:
@@ -30,6 +41,7 @@ async def main(argv: list[str] | None = None) -> int:
     parser.add_argument("message")
     parser.add_argument("--conversation", type=uuid.UUID)
     parser.add_argument("--verbose", action="store_true", help="print tool calls and arguments")
+    parser.add_argument("--user", default=DEMO_USERNAME, help="conversation owner (default: demo)")
     args = parser.parse_args(argv)
 
     settings = get_settings()
@@ -39,9 +51,21 @@ async def main(argv: list[str] | None = None) -> int:
         return 1
 
     with get_session_factory()() as session:
+        user_id = session.scalar(select(User.id).where(User.username == args.user))
+        if user_id is None:
+            print(
+                f"User '{args.user}' does not exist (run scripts.seed_demo_user)", file=sys.stderr
+            )
+            return 1
         try:
             turn = await chat_turn(
-                session, llm, get_embedder(settings), settings, args.message, args.conversation
+                session,
+                llm,
+                get_embedder(settings),
+                settings,
+                args.message,
+                args.conversation,
+                user_id=user_id,
             )
         except (DomainError, LLMError) as error:
             print(f"Error [{error.code}]: {error.message}", file=sys.stderr)
@@ -65,9 +89,8 @@ async def main(argv: list[str] | None = None) -> int:
                 .limit(1)
             )
             for log in session.scalars(select(ToolCallLog).where(ToolCallLog.message_id == last)):
-                found = [p["name"] for p in log.result.get("products", [])]
                 print(f"  tool[{log.step}] {log.tool_name} {json.dumps(log.arguments)}")
-                print(f"     -> ok={not log.is_error} {found or log.result.get('error')}")
+                print(f"     -> ok={not log.is_error} {_summarize(log.result)}")
     return 0
 
 

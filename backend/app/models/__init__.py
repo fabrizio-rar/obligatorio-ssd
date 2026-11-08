@@ -1,5 +1,7 @@
 """SQLAlchemy models. Importing this package registers every table in Base.metadata."""
 
+from app.models.auth import AuthToken, User
+from app.models.cart import Cart, CartItem
 from app.models.catalog import (
     Brand,
     Category,
@@ -15,6 +17,10 @@ from app.models.chat import AgentStateRow, ChatMessage, Conversation, ToolCallLo
 from app.models.retrieval import ProductEmbedding
 
 __all__ = [
+    "Cart",
+    "CartItem",
+    "AuthToken",
+    "User",
     "AgentStateRow",
     "ChatMessage",
     "Conversation",

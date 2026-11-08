@@ -84,3 +84,31 @@ def catalog_db(engine: Engine, dataset_records: Records) -> Iterator[Session]:
         ingest_records(session, dataset_records, "dataset")
         index_products(session, FakeEmbedder(dim=EMBEDDING_COLUMN_DIM))
         yield session
+
+
+@pytest.fixture
+def api(catalog_db: Session):
+    """TestClient against the test DB. `api.login()` registers a fresh user and sets its
+    Bearer token on the client."""
+    import uuid
+
+    from fastapi.testclient import TestClient
+
+    from app.db import get_db
+    from app.main import app
+
+    app.dependency_overrides[get_db] = lambda: catalog_db
+    client = TestClient(app)
+
+    def login(username: str | None = None, password: str = "secret123") -> str:
+        name = username or f"u{uuid.uuid4().hex[:10]}"
+        client.post("/api/auth/register", json={"username": name, "password": password})
+        token = client.post(
+            "/api/auth/login", json={"username": name, "password": password}
+        ).json()["token"]
+        client.headers["Authorization"] = f"Bearer {token}"
+        return token
+
+    client.login = login
+    yield client
+    app.dependency_overrides.clear()
