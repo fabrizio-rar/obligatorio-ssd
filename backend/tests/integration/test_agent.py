@@ -261,6 +261,7 @@ def test_get_product_by_name_returns_full_sheet(db):
     colonia = next(w for w in product["stock_by_warehouse"] if w["warehouse_id"] == "WH-COL-001")
     assert colonia["available"] == 0
     assert "Active Noise Cancellation: No" in product["specs"]
+    assert "image_url" not in product  # UI-only data: not sent to the model
     assert execution.product_ids == [product["product_id"]]
 
 

@@ -204,7 +204,7 @@ GET_PRODUCT_DESCRIPTION = (
 
 
 def _detail_for_model(detail: ProductDetail) -> dict[str, Any]:
-    data = detail.model_dump(mode="json", exclude_none=True)
+    data = detail.model_dump(mode="json", exclude_none=True, exclude={"image_url"})
     if detail.status == ProductStatus.DISCONTINUED:
         return data
     data["price"] = f"{detail.currency} {detail.current_price}"

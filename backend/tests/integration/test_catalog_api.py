@@ -89,6 +89,7 @@ def test_product_detail(api, catalog_db):
     pid = _id(catalog_db, "Vector Air 690")
     body = api.get(f"/api/products/{pid}").json()
     assert body["status"] == "available"
+    assert body["image_url"].startswith("https://")  # the main product, not only related ones
     assert len(body["stock_by_warehouse"]) == 5
     assert {s["name"] for s in body["specs"]} >= {"Active Noise Cancellation", "Battery Life"}
     for related in body["alternatives"] + body["accessories"] + body["often_bought_with"]:

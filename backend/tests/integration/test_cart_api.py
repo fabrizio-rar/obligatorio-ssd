@@ -67,6 +67,7 @@ def test_add_sums_quantities_and_computes_totals(cart_api, catalog_db):
 
     [item] = body["items"]
     assert item["quantity"] == 3
+    assert item["image_url"].startswith("https://")
     assert Decimal(item["unit_price"]) == price
     assert Decimal(item["line_total"]) == price * 3
     assert Decimal(body["total"]) == price * 3

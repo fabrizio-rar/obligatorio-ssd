@@ -79,6 +79,7 @@ class ProductDetail(BaseModel):
     key_features: list[str] = []
     recommended_for: list[str] = []
     not_recommended_for: list[str] = []
+    image_url: str | None = None
     color: str | None = None
     weight_kg: Decimal | None = None
     dimensions_cm: str | None = None  # "W x H x D"
@@ -202,6 +203,7 @@ def get_product_detail(session: Session, product_id: str) -> ProductDetail:
         key_features=product.key_features,
         recommended_for=product.recommended_for,
         not_recommended_for=product.not_recommended_for,
+        image_url=product.image_url,
         color=product.color,
         weight_kg=product.weight_kg,
         dimensions_cm=" x ".join(format_number(d) for d in dims) if all(dims) else None,

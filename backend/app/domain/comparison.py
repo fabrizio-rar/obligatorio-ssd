@@ -26,6 +26,7 @@ class ComparedProduct(BaseModel):
     subcategory: str
     currency: str | None
     current_price: Decimal | None
+    image_url: str | None
 
 
 class ComparisonRow(BaseModel):
@@ -121,6 +122,7 @@ def compare(session: Session, product_ids: list[str]) -> Comparison:
                 subcategory=d.subcategory,
                 currency=d.currency,
                 current_price=d.current_price,
+                image_url=d.image_url,
             )
             for d in details
         ],

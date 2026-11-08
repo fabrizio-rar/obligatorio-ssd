@@ -169,6 +169,7 @@ def test_compare_endpoint(api, catalog_db):
     a, b = _id(catalog_db, "Orbit Sound 458"), _id(catalog_db, "Quanta Quiet 638")
     body = api.get("/api/products/compare", params={"ids": f"{a},{b}"}).json()
     assert [p["product_id"] for p in body["products"]] == [a, b]
+    assert all(p["image_url"] for p in body["products"])  # column headers of the UI table
     assert len(body["rows"]) == 15
     mixed = api.get(
         "/api/products/compare", params={"ids": f"{a},{_id(catalog_db, 'Flux Edge 15 8/256')}"}
