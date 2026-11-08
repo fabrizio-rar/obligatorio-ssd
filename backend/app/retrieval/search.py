@@ -80,6 +80,11 @@ class SearchHit(BaseModel):
     rating: Decimal | None
     review_count: int | None
     matched_use_cases: list[str]
+    # Static data the agent uses to explain WHY a product fits (docs/PLAN.md §10.9)
+    short_description: str | None
+    key_features: list[str]
+    recommended_for: list[str]
+    not_recommended_for: list[str]
 
 
 class SearchResult(BaseModel):
@@ -218,5 +223,9 @@ def _load_hits(
             rating=product.rating,
             review_count=product.review_count,
             matched_use_cases=matched.get(product.id, []),
+            short_description=product.short_description,
+            key_features=product.key_features,
+            recommended_for=product.recommended_for,
+            not_recommended_for=product.not_recommended_for,
         )
     return [by_id[pid] for pid in product_ids]

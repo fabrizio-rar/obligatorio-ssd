@@ -66,3 +66,21 @@ def dataset_records() -> Records:
     if not DATASET.exists():
         pytest.skip(f"dataset not found at {DATASET}")
     return read_workbook(DATASET)
+
+
+@pytest.fixture(scope="module")
+def catalog_db(engine: Engine, dataset_records: Records) -> Iterator[Session]:
+    """Real dataset loaded and indexed with FakeEmbedder, once per test module.
+    Tests using it only read the catalog (or restore what they change)."""
+    from app.ingest.pipeline import ingest_records
+    from app.models.retrieval import EMBEDDING_COLUMN_DIM
+    from app.retrieval.embeddings import FakeEmbedder
+    from app.retrieval.indexer import index_products
+
+    tables = ", ".join(name for name, _ in LOAD_ORDER)
+    with engine.begin() as conn:
+        conn.execute(text(f"TRUNCATE {tables}, conversations CASCADE"))
+    with Session(engine) as session:
+        ingest_records(session, dataset_records, "dataset")
+        index_products(session, FakeEmbedder(dim=EMBEDDING_COLUMN_DIM))
+        yield session

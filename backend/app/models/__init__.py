@@ -11,9 +11,14 @@ from app.models.catalog import (
     Subcategory,
     Warehouse,
 )
+from app.models.chat import AgentStateRow, ChatMessage, Conversation, ToolCallLog
 from app.models.retrieval import ProductEmbedding
 
 __all__ = [
+    "AgentStateRow",
+    "ChatMessage",
+    "Conversation",
+    "ToolCallLog",
     "Brand",
     "Category",
     "Inventory",

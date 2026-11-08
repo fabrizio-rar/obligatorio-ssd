@@ -4,15 +4,11 @@ The catalog is loaded and indexed once for the whole module; tests only read it
 (the few that change something restore it).
 """
 
-from collections.abc import Iterator
-
 import pytest
 from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from app.domain.errors import DomainError
-from app.ingest.load import LOAD_ORDER
-from app.ingest.pipeline import ingest_records
 from app.models import Category as CategoryModel
 from app.models import Price, Product, ProductEmbedding, Subcategory
 from app.models.retrieval import EMBEDDING_COLUMN_DIM
@@ -27,14 +23,8 @@ EMBEDDER = FakeEmbedder(dim=EMBEDDING_COLUMN_DIM)
 
 
 @pytest.fixture(scope="module")
-def db(engine, dataset_records) -> Iterator[Session]:
-    tables = ", ".join(name for name, _ in LOAD_ORDER)
-    with engine.begin() as conn:
-        conn.execute(text(f"TRUNCATE {tables} CASCADE"))
-    with Session(engine) as session:
-        ingest_records(session, dataset_records, "dataset")
-        index_products(session, EMBEDDER)
-        yield session
+def db(catalog_db) -> Session:
+    return catalog_db
 
 
 def _search(db: Session, embedder=EMBEDDER, **kwargs):

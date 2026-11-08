@@ -17,7 +17,8 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [~] Esqueleto del monorepo + Docker (N1): backend + db listos (`/api/health`); **falta el frontend**
 - [x] Ingesta del Excel (N2): 8 hojas + reporte en `reports/ingest_report.json`. Los embeddings (paso 5) se suman con N8 y el usuario demo (paso 6) con N3
 - [x] Búsqueda (N8): embeddings en `product_embeddings` (`scripts.index_embeddings`) + `retrieval/search.py` (filtros SQL + vectorial + usos como señal, RRF). La conecta al agente N9
-- [ ] Resto del núcleo (N3–N7, N9–N14): ver `docs/PLAN.md` §20.1
+- [~] Agente (N9): loop + `POST /api/chat` (varios turnos, sin login ni streaming) + tool `search_products`. Faltan `get_product`, `compare_products`, `get_related_products` y las de carrito/órdenes/checkout (ver `docs/PLAN.md` §10.9.1)
+- [ ] Resto del núcleo (N3–N7, N10–N14): ver `docs/PLAN.md` §20.1
 
 > Cuando se complete un ítem del núcleo, actualizá esta checklist **y** la columna "Estado" de `docs/PLAN.md` §20.1 en el mismo cambio.
 
@@ -94,6 +95,8 @@ docker compose exec backend python -m scripts.ingest [--reset]   # re-ingesta ma
 docker compose exec backend python -m scripts.index_embeddings [--force]   # embeddings (solo lo que cambió; gasta centavos)
 docker compose exec backend python -m scripts.index_embeddings --query "auriculares para videollamadas"   # debug: top 5
 docker compose exec backend python -m scripts.search "headphones for video calls" --category Headphones --max-price 200 --use calls   # búsqueda real, con los args del agente
+docker compose exec backend python -m scripts.chat --verbose "busco auriculares hasta 200" [--conversation <id>]   # chat real (~USD 0,001 por turno)
+curl -X POST localhost:8000/api/chat -H 'Content-Type: application/json' -d '{"message": "busco auriculares"}'
 docker compose exec backend pytest                 # tests (sin evals); los de integración usan TEST_DATABASE_URL
 docker compose exec backend ruff check . && docker compose exec backend ruff format --check .
 docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-luna (gasta créditos: correr a mano)

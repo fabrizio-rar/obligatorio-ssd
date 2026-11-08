@@ -22,8 +22,15 @@ class Settings(BaseSettings):
     # OpenAI: optional so the app starts without it (chat and semantic search are disabled)
     openai_api_key: SecretStr | None = None
     llm_model: str = "gpt-6-luna"
+    llm_reasoning_effort: Literal["none", "low", "medium", "high"] = "low"
     llm_timeout_seconds: float = 60
     llm_max_retries: int = 2  # retries on 429 / 5xx / timeout (with backoff, by the SDK)
+
+    # Agent loop limits (docs/PLAN.md §10.7.3)
+    agent_max_steps: int = Field(default=6, ge=1)
+    agent_history_messages: int = Field(default=10, ge=0)
+    agent_turn_timeout_seconds: float = Field(default=90, gt=0)
+    agent_max_tokens_per_turn: int = Field(default=12000, gt=0)
 
     # Embeddings (docs/PLAN.md §9.3)
     embedding_provider: Literal["openai", "fake"] = "openai"
