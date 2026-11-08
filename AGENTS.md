@@ -67,6 +67,8 @@ docs/                  # PLAN.md, diagramas, capturas, informe
 
 ## Primer arranque (clone nuevo)
 
+> Guía completa para humanos (comandos, endpoints, problemas comunes): [`README.md`](README.md). Si cambiás un comando, un endpoint o una variable, actualizá también el README.
+
 ```bash
 cp .env.example .env          # OPENAI_API_KEY: opcional para levantar; la usan el chat y los embeddings
 docker compose up --build
