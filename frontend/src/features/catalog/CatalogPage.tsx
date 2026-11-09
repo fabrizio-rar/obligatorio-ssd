@@ -1,12 +1,5 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { BotMessageSquareIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  LayoutGridIcon,
-  type LucideIcon,
-  MapPinIcon,
-  PackageCheckIcon,
-} from 'lucide-react'
+import { ChevronLeftIcon, ChevronRightIcon, LayoutGridIcon, type LucideIcon } from 'lucide-react'
 import { type ReactNode, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
@@ -15,7 +8,6 @@ import {
   getBrands,
   getCategories,
   getProducts,
-  getWarehouses,
   PRODUCT_SORTS,
   type ProductSort,
 } from '@/api/endpoints'
@@ -79,7 +71,6 @@ export function CatalogPage() {
     placeholderData: keepPreviousData,
     enabled: category === null || (categories.data !== undefined && !unknownCategory),
   })
-  const warehouses = useQuery({ queryKey: ['warehouses'], queryFn: getWarehouses, staleTime: Infinity })
   const brands = useQuery({
     queryKey: ['brands', category],
     queryFn: () => getBrands(category),
@@ -123,8 +114,6 @@ export function CatalogPage() {
   }
 
   const hasFilters = filters.brand !== null || minPrice !== null || maxPrice !== null || filters.inStock
-  const showHero = category === null && page === 1 && !hasFilters
-  const activeProducts = categories.data?.reduce((sum, c) => sum + c.product_count, 0)
   const clearFilters = () => goTo({ brand: null, minPrice: null, maxPrice: null, inStock: false })
 
   // keepPreviousData would keep showing the last grid under an unknown category
@@ -133,30 +122,6 @@ export function CatalogPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      {showHero && (
-        <section className="relative overflow-hidden rounded-2xl bg-linear-to-br from-indigo-600 via-violet-600 to-fuchsia-600 px-8 py-9 text-white shadow-lg shadow-violet-500/20">
-          {/* Soft light blobs */}
-          <div className="pointer-events-none absolute -top-16 -right-10 size-64 rounded-full bg-white/15 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-20 left-1/3 size-56 rounded-full bg-fuchsia-300/25 blur-3xl" />
-          <div className="relative flex max-w-xl flex-col gap-3">
-            <p className="text-sm font-medium tracking-wide text-white/80 uppercase">Tecnología en Uruguay</p>
-            <h1 className="text-3xl leading-tight font-semibold text-balance">
-              Encontrá la tecnología que se adapta a lo que necesitás
-            </h1>
-            <p className="text-white/85">
-              Contale al asistente qué buscás, en tus palabras o por voz, y te ayuda a comparar y elegir.
-            </p>
-            <ul className="mt-2 flex flex-wrap gap-2 text-sm">
-              {activeProducts !== undefined && (
-                <HeroFact icon={PackageCheckIcon}>{activeProducts} productos</HeroFact>
-              )}
-              {categories.data && <HeroFact icon={LayoutGridIcon}>{categories.data.length} categorías</HeroFact>}
-              {warehouses.data && <HeroFact icon={MapPinIcon}>{warehouses.data.length} sucursales</HeroFact>}
-              <HeroFact icon={BotMessageSquareIcon}>Asistente con IA</HeroFact>
-            </ul>
-          </div>
-        </section>
-      )}
 
       <div className="flex flex-wrap gap-2" role="group" aria-label="Categorías">
         <CategoryChip active={!category} onClick={() => goTo({ category: null })} icon={LayoutGridIcon}>
@@ -263,15 +228,6 @@ export function CatalogPage() {
         </nav>
       )}
     </div>
-  )
-}
-
-function HeroFact({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
-  return (
-    <li className="flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 backdrop-blur-sm">
-      <Icon className="size-4" />
-      {children}
-    </li>
   )
 }
 
