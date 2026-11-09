@@ -116,6 +116,24 @@ def test_search_then_recommend(db):
     assert {"stock", "recommended_for", "key_features"} <= set(product)
 
 
+def test_nothing_within_budget_offers_the_cheapest(db):
+    """max_price leaves 0 results: the tool adds the cheapest matches by price, and the
+    model may show them (they came from a tool result)."""
+
+    def recommend_cheapest(request) -> LLMResult:
+        result = json.loads(request["tool_outputs"][0].output)
+        assert result["products"] == [] and "note" in result
+        return final(_answer([result["cheapest_above_budget"][0]["product_id"]], type_="info"))
+
+    turn = _run(
+        db, FakeLLM([tool_call("search_products", {**SEARCH, "max_price": 20}), recommend_cheapest])
+    )
+    result = turn.tool_executions[0][1].result
+    prices = [float(p["price"].split()[1]) for p in result["cheapest_above_budget"]]
+    assert prices == sorted(prices) and prices[0] > 20
+    assert turn.response.product_ids == [result["cheapest_above_budget"][0]["product_id"]]
+
+
 def test_invalid_arguments_never_reach_the_search(db, monkeypatch):
     def must_not_run(*_args, **_kwargs):
         raise AssertionError("search() called with invalid arguments")

@@ -296,21 +296,54 @@ def _to_card(row) -> ProductCard:
     )
 
 
+class ProductSort(StrEnum):
+    DEFAULT = "default"  # category display order, then name
+    NAME_ASC = "name_asc"
+    NAME_DESC = "name_desc"
+    PRICE_ASC = "price_asc"
+    PRICE_DESC = "price_desc"
+
+
 def list_products(
-    session: Session, category: str | None = None, page: int = 1, page_size: int = 24
+    session: Session,
+    category: str | None = None,
+    page: int = 1,
+    page_size: int = 24,
+    *,
+    brand: str | None = None,
+    min_price: Decimal | None = None,
+    max_price: Decimal | None = None,
+    in_stock: bool = False,
+    sort: ProductSort = ProductSort.DEFAULT,
 ) -> ProductPage:
-    """Active products, paginated, optionally by category. Ordered by category (its
-    display order), then name, so pages are stable."""
+    """Active products, paginated, with optional filters (category, brand, current price
+    range, only with stock). Default order: category (its display order), then name. Every
+    order ends with the product ID, so pages are stable (no product repeats or goes missing
+    across pages). An unknown brand simply matches nothing."""
     if page < 1 or not 1 <= page_size <= MAX_PAGE_SIZE:
         raise DomainError("INVALID_INPUT", f"page >= 1 and page_size between 1 and {MAX_PAGE_SIZE}")
+    if any(p is not None and p < 0 for p in (min_price, max_price)):
+        raise DomainError("INVALID_INPUT", "Prices cannot be negative")
+    if min_price is not None and max_price is not None and min_price > max_price:
+        raise DomainError(
+            "INVALID_INPUT",
+            "min_price cannot be greater than max_price",
+            {"min_price": str(min_price), "max_price": str(max_price)},
+        )
     stmt = _card_query()
     if category is not None:
         stmt = stmt.where(Category.name == category)
+    if brand is not None:
+        stmt = stmt.where(Brand.name == brand)
+    if min_price is not None:
+        stmt = stmt.where(Price.current_price >= min_price)
+    if max_price is not None:
+        stmt = stmt.where(Price.current_price <= max_price)
+    if in_stock:
+        stmt = stmt.where(product_availability.c.available > 0)
     total = session.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = session.execute(
-        stmt.order_by(Category.id, Subcategory.sort_order, Product.name, Product.id)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+        stmt.order_by(*_ORDER[sort], Product.id).offset((page - 1) * page_size).limit(page_size)
     ).all()
     return ProductPage(
         items=[_to_card(r) for r in rows],
@@ -319,6 +352,15 @@ def list_products(
         total=total,
         total_pages=max(1, -(-total // page_size)),
     )
+
+
+_ORDER = {
+    ProductSort.DEFAULT: (Category.id, Subcategory.sort_order, Product.name),
+    ProductSort.NAME_ASC: (func.lower(Product.name),),
+    ProductSort.NAME_DESC: (func.lower(Product.name).desc(),),
+    ProductSort.PRICE_ASC: (Price.current_price, func.lower(Product.name)),
+    ProductSort.PRICE_DESC: (Price.current_price.desc(), func.lower(Product.name)),
+}
 
 
 def product_cards(session: Session, product_ids: list[str]) -> list[ProductCard]:
@@ -342,6 +384,13 @@ class CategoryOut(BaseModel):
     name: str
     subcategories: list[str]
     product_count: int  # active products
+
+
+class BrandOut(BaseModel):
+    brand_id: str
+    name: str
+    positioning: str | None
+    product_count: int  # active products (in the category, when filtered)
 
 
 class WarehouseOut(BaseModel):
@@ -373,6 +422,28 @@ def list_categories(session: Session) -> list[CategoryOut]:
             product_count=counts.get(c.id, 0),
         )
         for c in session.scalars(select(Category).order_by(Category.id))
+    ]
+
+
+def list_brands(session: Session, category: str | None = None) -> list[BrandOut]:
+    """Brands with at least one active product (in `category`, if given), by name. For the
+    catalog's brand filter: the UI never offers a brand that would return nothing."""
+    stmt = (
+        select(Brand, func.count(Product.id))
+        .join(Product, Product.brand_id == Brand.id)
+        .where(Product.active.is_(True))
+        .group_by(Brand.id)
+        .order_by(Brand.name)
+    )
+    if category is not None:
+        stmt = (
+            stmt.join(Subcategory, Subcategory.id == Product.subcategory_id)
+            .join(Category, Category.id == Subcategory.category_id)
+            .where(Category.name == category)
+        )
+    return [
+        BrandOut(brand_id=b.id, name=b.name, positioning=b.positioning, product_count=n)
+        for b, n in session.execute(stmt)
     ]
 
 

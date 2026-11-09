@@ -1,5 +1,6 @@
 import { api } from './client'
 import type {
+  Brand,
   Cart,
   Category,
   ChatTurn,
@@ -34,11 +35,34 @@ export const getMe = () => api<User>('/auth/me')
 export const PAGE_SIZE = 24
 export const MAX_CARD_IDS = 20
 
-export const getProducts = (category: string | null, page: number) => {
+/** Catalog filters (docs/PLAN.md §12). Prices are the current price in USD, both ends inclusive. */
+/** Order of the catalog listing (`?sort=`). "default" = by category, then name. */
+export const PRODUCT_SORTS = ['default', 'name_asc', 'name_desc', 'price_asc', 'price_desc'] as const
+export type ProductSort = (typeof PRODUCT_SORTS)[number]
+
+export interface CatalogFilters {
+  category: string | null
+  brand: string | null
+  minPrice: number | null
+  maxPrice: number | null
+  inStock: boolean
+  sort: ProductSort
+}
+
+export const getProducts = (filters: CatalogFilters, page: number) => {
   const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) })
-  if (category) params.set('category', category)
+  if (filters.category) params.set('category', filters.category)
+  if (filters.brand) params.set('brand', filters.brand)
+  if (filters.minPrice !== null) params.set('min_price', String(filters.minPrice))
+  if (filters.maxPrice !== null) params.set('max_price', String(filters.maxPrice))
+  if (filters.inStock) params.set('in_stock', 'true')
+  if (filters.sort !== 'default') params.set('sort', filters.sort)
   return api<ProductPage>(`/products?${params}`)
 }
+
+/** Brands with active products (in the category, if given): the options of the brand filter. */
+export const getBrands = (category: string | null) =>
+  api<Brand[]>(category ? `/brands?category=${encodeURIComponent(category)}` : '/brands')
 
 /** Cards for the chat: same order as the IDs; inactive and unknown IDs are omitted by the API. */
 export const getProductCards = (ids: string[]) =>

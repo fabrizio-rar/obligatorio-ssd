@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { login, register } from '@/api/endpoints'
 import { Button } from '@/components/ui/button'
+import { Logo } from '@/components/brand/Logo'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -76,11 +77,13 @@ export function AuthPage({ mode }: { mode: Mode }) {
       : null
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
-      <Card className="w-full max-w-sm">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-linear-to-br from-indigo-950 via-indigo-900 to-violet-900 p-4">
+      <div className="pointer-events-none absolute -top-24 -left-24 size-96 rounded-full bg-violet-500/30 blur-3xl" />
+      <div className="pointer-events-none absolute -right-24 -bottom-24 size-96 rounded-full bg-fuchsia-500/25 blur-3xl" />
+      <Card className="relative w-full max-w-sm shadow-2xl shadow-black/30">
         <CardHeader>
-          <Link to="/" className="text-lg font-bold">
-            MercaNova
+          <Link to="/" aria-label="MercaNova: volver al catálogo" className="mb-2 w-fit">
+            <Logo />
           </Link>
           <CardTitle>{isLogin ? 'Iniciar sesión' : 'Crear cuenta'}</CardTitle>
           <CardDescription>

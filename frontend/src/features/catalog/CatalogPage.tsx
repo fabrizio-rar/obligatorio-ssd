@@ -1,33 +1,90 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
-import { useEffect } from 'react'
+import { BotMessageSquareIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  LayoutGridIcon,
+  type LucideIcon,
+  MapPinIcon,
+  PackageCheckIcon,
+} from 'lucide-react'
+import { type ReactNode, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
-import { getCategories, getProducts } from '@/api/endpoints'
+import {
+  type CatalogFilters,
+  getBrands,
+  getCategories,
+  getProducts,
+  getWarehouses,
+  PRODUCT_SORTS,
+  type ProductSort,
+} from '@/api/endpoints'
+import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { translateCategory } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
+import { CatalogFiltersBar } from './CatalogFiltersBar'
 import { ProductCard } from './ProductCard'
+import { categoryIcon } from './categoryArt'
+
+const SORT_LABELS: Record<ProductSort, string> = {
+  default: 'Categoría',
+  name_asc: 'Nombre: A - Z',
+  name_desc: 'Nombre: Z - A',
+  price_asc: 'Precio: menor a mayor',
+  price_desc: 'Precio: mayor a menor',
+}
+
+/** ?sort= from the URL; an unknown value falls back to the default order. */
+function sortParam(value: string | null): ProductSort {
+  return PRODUCT_SORTS.find((s) => s === value) ?? 'default'
+}
+
+/** ?min_price= / ?max_price= from the URL: a number ≥ 0, anything else is ignored. */
+function priceParam(value: string | null): number | null {
+  if (value === null || value.trim() === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) && n >= 0 ? n : null
+}
 
 /**
- * Catalog (RF-01): active products only, paginated, filtered by category.
- * The API only filters by category today (docs/PLAN.md §12); search is done through the chat.
+ * Catalog (RF-01): active products only, paginated, filtered by category, brand, price range and
+ * stock (docs/PLAN.md §12). All the state is in the URL. Free-text search is done through the chat.
  */
 export function CatalogPage() {
   const [params, setParams] = useSearchParams()
   const category = params.get('category')
   const page = Math.max(1, Number(params.get('page')) || 1)
+  let minPrice = priceParam(params.get('min_price'))
+  let maxPrice = priceParam(params.get('max_price'))
+  if (minPrice !== null && maxPrice !== null && minPrice > maxPrice) [minPrice, maxPrice] = [maxPrice, minPrice]
+  const filters: CatalogFilters = {
+    category,
+    brand: params.get('brand') || null,
+    minPrice,
+    maxPrice,
+    inStock: params.get('in_stock') === 'true',
+    sort: sortParam(params.get('sort')),
+  }
 
   const categories = useQuery({ queryKey: ['categories'], queryFn: getCategories, staleTime: Infinity })
   // A category typed in the URL that does not exist: FastAPI would answer a 422 without our error format
   const unknownCategory =
     category !== null && categories.data !== undefined && !categories.data.some((c) => c.name === category)
   const products = useQuery({
-    queryKey: ['products', category, page],
-    queryFn: () => getProducts(category, page),
+    queryKey: ['products', filters, page],
+    queryFn: () => getProducts(filters, page),
     placeholderData: keepPreviousData,
     enabled: category === null || (categories.data !== undefined && !unknownCategory),
+  })
+  const warehouses = useQuery({ queryKey: ['warehouses'], queryFn: getWarehouses, staleTime: Infinity })
+  const brands = useQuery({
+    queryKey: ['brands', category],
+    queryFn: () => getBrands(category),
+    staleTime: Infinity,
+    enabled: !unknownCategory,
   })
 
   // ?page= beyond the last page (old link, or the catalog shrank): go back to the first one
@@ -45,14 +102,30 @@ export function CatalogPage() {
     }
   }, [lastPage, page, setParams])
 
-  function goTo(next: { category?: string | null; page?: number }) {
-    const nextCategory = next.category === undefined ? category : next.category
+  /** Any change of category or filter goes back to page 1. Changing the category keeps the price
+   * and stock filters but drops the brand (it may not exist in the new category). */
+  function goTo(next: Partial<CatalogFilters> & { page?: number }) {
+    const f: CatalogFilters = {
+      ...filters,
+      ...(next.category !== undefined && next.category !== category ? { brand: null } : {}),
+      ...next,
+    }
     const nextParams = new URLSearchParams()
-    if (nextCategory) nextParams.set('category', nextCategory)
+    if (f.category) nextParams.set('category', f.category)
+    if (f.brand) nextParams.set('brand', f.brand)
+    if (f.minPrice !== null) nextParams.set('min_price', String(f.minPrice))
+    if (f.maxPrice !== null) nextParams.set('max_price', String(f.maxPrice))
+    if (f.inStock) nextParams.set('in_stock', 'true')
+    if (f.sort !== 'default') nextParams.set('sort', f.sort)
     if (next.page && next.page > 1) nextParams.set('page', String(next.page))
     setParams(nextParams)
     window.scrollTo({ top: 0 })
   }
+
+  const hasFilters = filters.brand !== null || minPrice !== null || maxPrice !== null || filters.inStock
+  const showHero = category === null && page === 1 && !hasFilters
+  const activeProducts = categories.data?.reduce((sum, c) => sum + c.product_count, 0)
+  const clearFilters = () => goTo({ brand: null, minPrice: null, maxPrice: null, inStock: false })
 
   // keepPreviousData would keep showing the last grid under an unknown category
   const data = unknownCategory ? undefined : products.data
@@ -60,28 +133,77 @@ export function CatalogPage() {
 
   return (
     <div className="flex flex-col gap-5">
+      {showHero && (
+        <section className="relative overflow-hidden rounded-2xl bg-linear-to-br from-indigo-600 via-violet-600 to-fuchsia-600 px-8 py-9 text-white shadow-lg shadow-violet-500/20">
+          {/* Soft light blobs */}
+          <div className="pointer-events-none absolute -top-16 -right-10 size-64 rounded-full bg-white/15 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-20 left-1/3 size-56 rounded-full bg-fuchsia-300/25 blur-3xl" />
+          <div className="relative flex max-w-xl flex-col gap-3">
+            <p className="text-sm font-medium tracking-wide text-white/80 uppercase">Tecnología en Uruguay</p>
+            <h1 className="text-3xl leading-tight font-semibold text-balance">
+              Encontrá la tecnología que se adapta a lo que necesitás
+            </h1>
+            <p className="text-white/85">
+              Contale al asistente qué buscás, en tus palabras o por voz, y te ayuda a comparar y elegir.
+            </p>
+            <ul className="mt-2 flex flex-wrap gap-2 text-sm">
+              {activeProducts !== undefined && (
+                <HeroFact icon={PackageCheckIcon}>{activeProducts} productos</HeroFact>
+              )}
+              {categories.data && <HeroFact icon={LayoutGridIcon}>{categories.data.length} categorías</HeroFact>}
+              {warehouses.data && <HeroFact icon={MapPinIcon}>{warehouses.data.length} sucursales</HeroFact>}
+              <HeroFact icon={BotMessageSquareIcon}>Asistente con IA</HeroFact>
+            </ul>
+          </div>
+        </section>
+      )}
+
       <div className="flex flex-wrap gap-2" role="group" aria-label="Categorías">
-        <Button size="sm" variant={category ? 'outline' : 'default'} onClick={() => goTo({ category: null })}>
+        <CategoryChip active={!category} onClick={() => goTo({ category: null })} icon={LayoutGridIcon}>
           Todo
-        </Button>
+        </CategoryChip>
         {categories.data?.map((c) => (
-          <Button
+          <CategoryChip
             key={c.category_id}
-            size="sm"
-            variant={category === c.name ? 'default' : 'outline'}
+            active={category === c.name}
             onClick={() => goTo({ category: c.name })}
+            icon={categoryIcon(c.name)}
           >
             {translateCategory(c.name)}
             <span className="text-xs opacity-60">{c.product_count}</span>
-          </Button>
+          </CategoryChip>
         ))}
       </div>
 
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-xl font-semibold">
+      {!unknownCategory && (
+        <CatalogFiltersBar filters={filters} brands={brands.data} onChange={goTo} onClear={clearFilters} />
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold tracking-tight">
           {category && !unknownCategory ? translateCategory(category) : 'Todos los productos'}
-        </h1>
-        {data && <p className="text-sm text-muted-foreground">{data.total} productos</p>}
+        </h2>
+        <div className="flex items-center gap-4">
+          {data && <p className="text-sm text-muted-foreground">{data.total} productos</p>}
+          {/* Not a filter: "Limpiar filtros" keeps it */}
+          <div className="flex items-center gap-2">
+            <Label htmlFor="catalog-sort" className="text-muted-foreground">
+              Ordenar por
+            </Label>
+            <select
+              id="catalog-sort"
+              className="h-8 rounded-lg border border-input bg-background px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              value={filters.sort}
+              onChange={(e) => goTo({ sort: sortParam(e.target.value) })}
+            >
+              {PRODUCT_SORTS.map((s) => (
+                <option key={s} value={s}>
+                  {SORT_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
 
       {unknownCategory && (
@@ -109,7 +231,16 @@ export function CatalogPage() {
         {data?.items.map((product) => <ProductCard key={product.product_id} product={product} />)}
       </div>
 
-      {data && data.total === 0 && <p className="text-muted-foreground">No hay productos en esta categoría.</p>}
+      {data && data.total === 0 && (
+        <div className="flex flex-col items-start gap-2 text-muted-foreground">
+          <p>{hasFilters ? 'No hay productos con estos filtros.' : 'No hay productos en esta categoría.'}</p>
+          {hasFilters && (
+            <Button variant="outline" size="sm" onClick={clearFilters}>
+              Limpiar filtros
+            </Button>
+          )}
+        </div>
+      )}
 
       {totalPages > 1 && (
         <nav className="flex items-center justify-center gap-3" aria-label="Paginación">
@@ -132,5 +263,43 @@ export function CatalogPage() {
         </nav>
       )}
     </div>
+  )
+}
+
+function HeroFact({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
+  return (
+    <li className="flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 backdrop-blur-sm">
+      <Icon className="size-4" />
+      {children}
+    </li>
+  )
+}
+
+function CategoryChip({
+  active,
+  icon: Icon,
+  onClick,
+  children,
+}: {
+  active: boolean
+  icon: LucideIcon
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
+        active
+          ? 'border-transparent bg-primary text-primary-foreground shadow-sm shadow-primary/30'
+          : 'border-border bg-card text-foreground hover:border-primary/40 hover:bg-accent hover:text-accent-foreground',
+      )}
+    >
+      <Icon className="size-4" />
+      {children}
+    </button>
   )
 }

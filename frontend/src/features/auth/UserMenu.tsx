@@ -5,6 +5,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { getMe, logout } from '@/api/endpoints'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { setSession, useSession } from '@/lib/session'
+import { cn } from '@/lib/utils'
 
 /** Header: "Iniciar sesión" or the username with "Salir". */
 export function UserMenu() {
@@ -31,7 +32,8 @@ export function UserMenu() {
       <Link
         to="/login"
         state={{ from: location.pathname + location.search }}
-        className={buttonVariants({ variant: 'default' })}
+        // buttonVariants() only concatenates: cn() resolves the conflicting colors
+        className={cn(buttonVariants(), 'bg-white text-indigo-950 hover:bg-white/90')}
       >
         Iniciar sesión
       </Link>
@@ -40,11 +42,19 @@ export function UserMenu() {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="flex items-center gap-1 text-sm text-muted-foreground">
-        <UserIcon className="size-4" />
+      <span className="flex items-center gap-1.5 text-sm text-white/85">
+        <span className="flex size-7 items-center justify-center rounded-full bg-white/15">
+          <UserIcon className="size-4" />
+        </span>
         {session.username}
       </span>
-      <Button variant="ghost" size="sm" onClick={() => signOut.mutate()} disabled={signOut.isPending}>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-white/85 hover:bg-white/15 hover:text-white"
+        onClick={() => signOut.mutate()}
+        disabled={signOut.isPending}
+      >
         <LogOutIcon data-icon="inline-start" />
         Salir
       </Button>

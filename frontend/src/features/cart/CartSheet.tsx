@@ -43,10 +43,16 @@ export function CartSheet() {
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger
         render={
-          <Button variant="outline" className="relative" aria-label={`Carrito: ${count} productos`}>
+          <Button
+            variant="ghost"
+            className="relative border border-white/15 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+            aria-label={`Carrito: ${count} productos`}
+          >
             <ShoppingCartIcon data-icon="inline-start" />
             Carrito
-            {count > 0 && <Badge className="ml-1 h-5 min-w-5 px-1.5">{count}</Badge>}
+            {count > 0 && (
+              <Badge className="ml-1 h-5 min-w-5 bg-fuchsia-500 px-1.5 text-white">{count}</Badge>
+            )}
           </Button>
         }
       />

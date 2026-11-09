@@ -118,6 +118,13 @@ export interface Category {
   product_count: number
 }
 
+export interface Brand {
+  brand_id: string
+  name: string // also the value of ?brand=
+  positioning: string | null
+  product_count: number // active products (in the category, when filtered)
+}
+
 export interface Warehouse {
   warehouse_id: string
   name: string

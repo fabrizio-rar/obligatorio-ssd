@@ -18,12 +18,12 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [x] Ingesta del Excel (N2): 8 hojas + reporte en `reports/ingest_report.json`. Los embeddings (paso 5) se suman con N8 y el usuario demo (paso 6) con N3
 - [x] Búsqueda (N8): embeddings en `product_embeddings` (`scripts.index_embeddings`) + `retrieval/search.py` (filtros SQL + vectorial + usos como señal, RRF). La conecta al agente N9
 - [~] Agente (N9): loop + `POST /api/chat` (varios turnos, con login, sin streaming) + historial `GET /api/conversations` y `/{id}/messages` + 9 tools (`search_products`, `get_product`, `get_related_products`, `compare_products` y las 5 de carrito, nivel 3 con confirmación en la UI). Faltan `get_orders`, `get_order` y `start_checkout` (dependen del checkout, N6)
-- [x] Auth (N3) y catálogo (N4): backend (`/api/auth/*`, `/api/products`, `/api/products/{id}`, `/api/categories`, `/api/warehouses`) + UI (login/registro, grilla por categoría con paginación, detalle con specs, stock por sucursal y relacionados)
+- [x] Auth (N3) y catálogo (N4): backend (`/api/auth/*`, `/api/products` con filtros de categoría, marca, precio y stock y orden (`sort`), `/api/products/{id}`, `/api/categories`, `/api/brands`, `/api/warehouses`) + UI (login/registro, grilla con filtros y paginación, detalle con specs, stock por sucursal y relacionados)
 - [x] Carrito (N5): backend + tools del agente listos (`domain/cart.py`, `/api/cart*`, `get_cart`/`add_to_cart`/`update_cart_item`/`remove_from_cart`/`clear_cart`) + UI (drawer con +/−, quitar, vaciar con confirmación, avisos de stock; badge que se refresca con `ui_actions`)
 - [x] Chat en el frontend (N11): tarjetas por ID (`/products?ids=`), tabla comparativa (`comparison_ids` → `/api/products/compare`, compacta en el chat y completa en `/compare`), aclaraciones, chips, reintentar, tarjeta de confirmación de nivel 3, "ver tools usadas" e historial de conversaciones
 - [x] `AGENTS.md` + skills (N14): `testing`, `mercanova-review`, `add-agent-tool`
 - [x] Voz (N12): backend (`POST /api/transcribe`) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input)
-- [~] Tests (N13): 281 de backend (`pytest`, sin OpenAI). Faltan la transacción de compra y la concurrencia (llegan con N6)
+- [~] Tests (N13): 306 de backend (`pytest`, sin OpenAI). Faltan la transacción de compra y la concurrencia (llegan con N6)
 - [~] Robustez del agente (N10): todo salvo el retry ante errores transitorios de la DB
 - [ ] Checkout (N6) y órdenes (N7), backend + UI: ver `docs/PLAN.md` §12.1, §12.2 y §20.1
 

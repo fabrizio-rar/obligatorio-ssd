@@ -25,7 +25,7 @@ interface Props {
 export function ChatMessageView({ message, busy, retryText, onRetry, onConfirmation }: Props) {
   if (message.role === 'user') {
     return (
-      <div className="ml-8 self-end rounded-lg bg-primary px-3 py-2 text-sm whitespace-pre-wrap text-primary-foreground">
+      <div className="ml-8 self-end rounded-2xl rounded-br-sm bg-linear-to-br from-indigo-600 to-violet-600 px-3 py-2 text-sm whitespace-pre-wrap text-white shadow-sm">
         {message.text}
       </div>
     )
@@ -49,7 +49,7 @@ export function ChatMessageView({ message, busy, retryText, onRetry, onConfirmat
   const { response, tools, confirmation } = message
   const question = response.clarifying_question
   return (
-    <div className="mr-8 flex flex-col gap-2 rounded-lg bg-muted px-3 py-2 text-sm">
+    <div className="mr-8 flex flex-col gap-2 rounded-2xl rounded-bl-sm bg-secondary px-3 py-2 text-sm">
       <AssistantText text={response.message} />
       {question && !response.message.includes(question) && <p className="font-medium">{question}</p>}
       <ResponseProducts response={response} />

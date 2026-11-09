@@ -1,14 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeftIcon, HistoryIcon, MessageSquarePlusIcon } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { ArrowLeftIcon, HistoryIcon, MessageSquarePlusIcon, PanelRightCloseIcon } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { ApiError } from '@/api/client'
+import { LogoMark } from '@/components/brand/Logo'
 import { getConversationMessages, getHealth, sendChatMessage } from '@/api/endpoints'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Textarea } from '@/components/ui/textarea'
 import { CART_KEY } from '@/features/cart/useCart'
 import { MicButton, RecordingBar, VoiceHint } from '@/features/voice/VoiceControls'
 import { useVoiceInput } from '@/features/voice/useVoiceInput'
@@ -19,12 +20,16 @@ import { ConversationHistory } from './ConversationHistory'
 import { fromHistory, type ChatMessage, type ConfirmationState } from './messages'
 
 /** Side panel: the assistant needs a login (POST /api/chat requires it). */
-export function ChatSidebar() {
+export function ChatSidebar({ minimized, onMinimize }: { minimized: boolean; onMinimize: () => void }) {
   const session = useSession()
   const location = useLocation()
-  if (session) return <ChatPanel key={session.username} />
+  if (session) return <ChatPanel key={session.username} minimized={minimized} onMinimize={onMinimize} />
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+    <div className="relative flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+      <div className="absolute top-3 right-3">
+        <MinimizeButton onClick={onMinimize} />
+      </div>
+      <LogoMark className="size-12" />
       <h2 className="font-semibold">Asistente MercaNova</h2>
       <p className="text-sm text-muted-foreground">
         Iniciá sesión para que el asistente te ayude a elegir, comparar y armar tu carrito.
@@ -36,7 +41,34 @@ export function ChatSidebar() {
   )
 }
 
-function ChatPanel() {
+function MinimizeButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button variant="ghost" size="icon-sm" onClick={onClick} aria-label="Minimizar el asistente" title="Minimizar">
+      <PanelRightCloseIcon />
+    </Button>
+  )
+}
+
+/** Three dots that rise in turn, like someone typing (respects prefers-reduced-motion). */
+function TypingIndicator() {
+  return (
+    <div
+      role="status"
+      aria-label="El asistente está escribiendo"
+      className="mr-8 flex w-fit items-center gap-1 rounded-2xl rounded-bl-sm bg-secondary px-3 py-3"
+    >
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="typing-dot size-1.5 rounded-full bg-primary/70"
+          style={{ animationDelay: `${i * 0.15}s` }}
+        />
+      ))}
+    </div>
+  )
+}
+
+function ChatPanel({ minimized, onMinimize }: { minimized: boolean; onMinimize: () => void }) {
   const queryClient = useQueryClient()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [conversationId, setConversationId] = useState<string | null>(null)
@@ -48,7 +80,7 @@ function ChatPanel() {
 
   const health = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
   const chatDisabled = health.data?.chat_enabled === false
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   // Voice only fills the input: the user reviews the text and sends it (docs/PLAN.md §11)
   const onTranscribed = useCallback((text: string) => {
@@ -61,6 +93,15 @@ function ChatPanel() {
   }, [])
   const voice = useVoiceInput(onTranscribed)
   const voiceBusy = voice.status !== 'idle'
+
+  // The input grows with its text (a long message or a voice transcription) up to ~6 lines,
+  // then scrolls vertically: never horizontally.
+  useLayoutEffect(() => {
+    const input = inputRef.current
+    if (!input) return
+    input.style.height = 'auto'
+    input.style.height = `${input.scrollHeight}px`
+  }, [draft, voice.status]) // the textarea remounts after a recording
 
   const send = useMutation({
     mutationFn: (text: string) => sendChatMessage(text, conversationId),
@@ -110,9 +151,10 @@ function ChatPanel() {
         ? 'Esperá la respuesta del asistente'
         : null
 
+  // New message, a turn starts, back from the history, or the panel is opened again
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, send.isPending, view])
+    if (!minimized) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, send.isPending, view, minimized])
 
   function submit(text: string) {
     const clean = text.trim()
@@ -146,6 +188,14 @@ function ChatPanel() {
     submit(draft)
   }
 
+  /** Enter sends, Shift+Enter adds a new line (not while composing an accent with an IME). */
+  function onInputKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault()
+      submit(draft)
+    }
+  }
+
   function newConversation() {
     setMessages([])
     setConversationId(null) // the next POST /api/chat without conversation_id creates one
@@ -163,8 +213,14 @@ function ChatPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-        <h2 className="font-semibold">Asistente MercaNova</h2>
+      <div className="flex items-center justify-between gap-2 border-b bg-linear-to-r from-indigo-50 via-violet-50 to-fuchsia-50 px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <LogoMark className="size-8" />
+          <div className="leading-tight">
+            <h2 className="font-semibold">Asistente MercaNova</h2>
+            <p className="text-xs text-muted-foreground">Te ayuda a elegir y comparar</p>
+          </div>
+        </div>
         {/* Locked while a turn is running: its answer belongs to the current conversation */}
         <div className="flex gap-1">
           <Button
@@ -195,6 +251,7 @@ function ChatPanel() {
             <MessageSquarePlusIcon data-icon="inline-start" />
             Nueva
           </Button>
+          <MinimizeButton onClick={onMinimize} />
         </div>
       </div>
 
@@ -233,23 +290,23 @@ function ChatPanel() {
                   onConfirmation={(state) => setConfirmation(m.id, state)}
                 />
               ))}
-              {send.isPending && <p className="text-sm text-muted-foreground">El asistente está pensando…</p>}
+              {send.isPending && <TypingIndicator />}
+              {/* Inside the scroll area, after the last message: scrolling up hides them */}
+              {suggestions.length > 0 && !send.isPending && (
+                <div className="flex flex-wrap gap-2" aria-label="Respuestas sugeridas">
+                  {suggestions.map((s) => (
+                    <Button key={s} variant="outline" size="sm" onClick={() => submit(s)}>
+                      {s}
+                    </Button>
+                  ))}
+                </div>
+              )}
               <div ref={bottomRef} />
             </div>
           </ScrollArea>
 
-          {suggestions.length > 0 && !send.isPending && (
-            <div className="flex flex-wrap gap-2 px-4 pb-2">
-              {suggestions.map((s) => (
-                <Button key={s} variant="outline" size="sm" onClick={() => submit(s)}>
-                  {s}
-                </Button>
-              ))}
-            </div>
-          )}
-
           <VoiceHint status={voice.status} silent={voice.silent} />
-          <form onSubmit={onSubmit} className="flex items-center gap-2 border-t p-3">
+          <form onSubmit={onSubmit} className="flex items-end gap-2 border-t p-3">
             {voice.status === 'recording' && voice.analyser ? (
               <RecordingBar
                 analyser={voice.analyser}
@@ -260,10 +317,13 @@ function ChatPanel() {
                 onCancel={voice.cancel}
               />
             ) : (
-              <Input
+              <Textarea
                 ref={inputRef}
+                rows={1}
+                className="max-h-36 min-h-8 resize-none overflow-y-auto py-1.5"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={onInputKeyDown}
                 placeholder={voice.status === 'transcribing' ? 'Transcribiendo…' : 'Escribí tu consulta o usá 🎤…'}
                 maxLength={2000}
                 disabled={chatDisabled || voiceBusy}

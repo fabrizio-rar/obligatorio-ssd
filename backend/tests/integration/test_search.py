@@ -221,3 +221,48 @@ def test_product_without_embedding_is_not_hidden(db):
         assert ids[0] != victim  # ...but no longer first: it has no semantic score
     finally:
         index_products(db, EMBEDDER)
+
+
+# --- Nothing within the budget -----------------------------------------------------------------
+
+
+def _cheapest_in_stock(db: Session, category: str, n: int = 3) -> list[str]:
+    return list(
+        db.scalars(
+            text(
+                "SELECT p.id FROM products p JOIN prices pr ON pr.product_id = p.id "
+                "JOIN product_availability a ON a.product_id = p.id "
+                "JOIN subcategories s ON s.id = p.subcategory_id "
+                "JOIN categories c ON c.id = s.category_id "
+                "WHERE p.active AND a.available > 0 AND c.name = :cat "
+                "ORDER BY pr.current_price, p.id LIMIT :n"
+            ),
+            {"cat": category, "n": n},
+        )
+    )
+
+
+def test_nothing_within_budget_returns_the_cheapest_by_price(db):
+    result = _search(db, query="headphones", category="Headphones", max_price=20)
+    assert result.hits == [] and result.total_candidates == 0
+    cheapest = result.cheapest_above_budget
+    assert [h.product_id for h in cheapest] == _cheapest_in_stock(db, "Headphones")
+    prices = [h.current_price for h in cheapest]
+    assert prices == sorted(prices) and prices[0] > 20
+    assert all(h.available > 0 for h in cheapest)  # the other filters still apply
+
+
+def test_cheapest_above_budget_keeps_the_other_filters(db):
+    result = _search(
+        db, query="gaming laptop", category="Laptops", subcategory="Gaming", max_price=400
+    )
+    assert result.cheapest_above_budget
+    assert {h.subcategory for h in result.cheapest_above_budget} == {"Gaming"}
+
+
+def test_no_cheapest_list_when_there_are_results_or_no_budget(db):
+    within = _search(db, query="headphones", category="Headphones", max_price=200)
+    assert within.hits and within.cheapest_above_budget == []
+    # No budget: an empty result is not about the price, nothing to suggest
+    none = _search(db, query="headphones", category="Headphones", min_price=5000)
+    assert none.hits == [] and none.cheapest_above_budget == []

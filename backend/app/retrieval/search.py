@@ -5,6 +5,8 @@
     3. Use-case ranking: candidates that match the requested use cases. It is a ranking
        signal, NOT a filter: a badly chosen use case worsens the order, never empties it.
     4. RRF fusion of both rankings, ties broken by rating and then review count.
+    5. Nothing within the budget: the cheapest products that pass every OTHER filter, by
+       price, so the agent can tell the real closest price (the ranking is not by price).
 
 Price and stock always come from the DB, never from the embedded text.
 """
@@ -30,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 RRF_K = 60  # standard RRF constant: dampens the weight of the top positions
 SEMANTIC_TOP_K = 20  # only the 20 nearest candidates get a semantic score
+CHEAPEST_ABOVE_BUDGET = 3
 
 
 class SearchQuery(BaseModel):
@@ -92,6 +95,8 @@ class SearchResult(BaseModel):
     hits: list[SearchHit]
     total_candidates: int  # products that passed the hard filters
     semantic_used: bool  # False if the query could not be embedded (fallback ranking)
+    # Only when max_price left 0 candidates: cheapest matches of the other filters, by price
+    cheapest_above_budget: list[SearchHit] = []
 
 
 def rrf(rankings: Sequence[Sequence[str]], k: int = RRF_K) -> dict[str, float]:
@@ -112,6 +117,33 @@ def _resolve_brand(session: Session, brand: str) -> str:
     return brand_id
 
 
+def _filtered(session: Session, stmt, q: SearchQuery, *, with_max_price: bool = True):
+    """Step 1, the hard filters, on top of any select over products."""
+    stmt = (
+        stmt.join(Subcategory, Subcategory.id == Product.subcategory_id)
+        .join(CategoryModel, CategoryModel.id == Subcategory.category_id)
+        .join(Price, Price.product_id == Product.id)
+        .join(product_availability, product_availability.c.product_id == Product.id)
+        .where(Product.active.is_(True))
+    )
+    if q.category is not None:
+        stmt = stmt.where(CategoryModel.name == q.category.value)
+    if q.subcategory is not None:
+        stmt = stmt.where(Subcategory.name == q.subcategory)
+    if q.brand is not None:
+        stmt = stmt.where(Product.brand_id == _resolve_brand(session, q.brand))
+    if q.min_price is not None:
+        stmt = stmt.where(Price.current_price >= q.min_price)
+    if q.max_price is not None and with_max_price:
+        stmt = stmt.where(Price.current_price <= q.max_price)
+    if q.exclude_use_cases:
+        avoid = [a.value for a in q.exclude_use_cases]
+        stmt = stmt.where(~Product.not_recommended_for.overlap(avoid))
+    if q.in_stock_only:
+        stmt = stmt.where(product_availability.c.available > 0)
+    return stmt
+
+
 def search(session: Session, q: SearchQuery, embedder: Embedder | None) -> SearchResult:
     distance = None
     semantic_used = False
@@ -126,34 +158,25 @@ def search(session: Session, q: SearchQuery, embedder: Embedder | None) -> Searc
 
     # 1. Hard filters
     columns = [Product.id, Product.recommended_for, Product.rating, Product.review_count]
-    stmt = (
-        select(*columns, *([distance] if distance is not None else []))
-        .join(Subcategory, Subcategory.id == Product.subcategory_id)
-        .join(CategoryModel, CategoryModel.id == Subcategory.category_id)
-        .join(Price, Price.product_id == Product.id)
-        .join(product_availability, product_availability.c.product_id == Product.id)
-        .where(Product.active.is_(True))
-    )
+    stmt = _filtered(session, select(*columns, *([distance] if distance is not None else [])), q)
     if distance is not None:
         # Outer join: a product not indexed yet is not hidden, it just ranks last
         stmt = stmt.outerjoin(ProductEmbedding, ProductEmbedding.product_id == Product.id)
-    if q.category is not None:
-        stmt = stmt.where(CategoryModel.name == q.category.value)
-    if q.subcategory is not None:
-        stmt = stmt.where(Subcategory.name == q.subcategory)
-    if q.brand is not None:
-        stmt = stmt.where(Product.brand_id == _resolve_brand(session, q.brand))
-    if q.min_price is not None:
-        stmt = stmt.where(Price.current_price >= q.min_price)
-    if q.max_price is not None:
-        stmt = stmt.where(Price.current_price <= q.max_price)
-    if q.exclude_use_cases:
-        avoid = [a.value for a in q.exclude_use_cases]
-        stmt = stmt.where(~Product.not_recommended_for.overlap(avoid))
-    if q.in_stock_only:
-        stmt = stmt.where(product_availability.c.available > 0)
 
     candidates = session.execute(stmt).all()
+    if not candidates and q.max_price is not None:
+        # 5. Nothing within the budget
+        cheapest = session.scalars(
+            _filtered(session, select(Product.id), q, with_max_price=False)
+            .order_by(Price.current_price, Product.id)
+            .limit(CHEAPEST_ABOVE_BUDGET)
+        ).all()
+        return SearchResult(
+            hits=[],
+            total_candidates=0,
+            semantic_used=semantic_used,
+            cheapest_above_budget=_load_hits(session, list(cheapest), {}),
+        )
     wanted = {u.value for u in q.use_cases}
     popularity = {c.id: (c.rating or 0, c.review_count or 0) for c in candidates}
     matched = {c.id: sorted(wanted.intersection(c.recommended_for)) for c in candidates}

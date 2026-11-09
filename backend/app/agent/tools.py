@@ -34,7 +34,7 @@ from app.domain.catalog import (
 from app.domain.comparison import MAX_PRODUCTS, MIN_PRODUCTS, compare
 from app.domain.errors import DomainError
 from app.retrieval.embeddings import Embedder
-from app.retrieval.search import SearchQuery, search
+from app.retrieval.search import SearchHit, SearchQuery, search
 from app.retrieval.vocabulary import (
     SUBCATEGORIES,
     AvoidCase,
@@ -144,32 +144,41 @@ def _search_products(ctx: ToolContext, args: SearchProductsArgs) -> ToolOutcome:
     )
     # Stage 3: execution
     result = search(ctx.session, query, ctx.embedder)
-    data = {
+    data: dict[str, Any] = {
         "ok": True,
         "total_candidates": result.total_candidates,
-        "products": [
-            {
-                "product_id": h.product_id,
-                "name": h.name,
-                "sku": h.sku,
-                "brand": h.brand,
-                "category": f"{h.category} > {h.subcategory}",
-                "price": f"{h.currency} {h.current_price}",
-                "list_price": f"{h.currency} {h.list_price}",
-                "discount_percent": h.discount_percent,
-                "stock": h.available,
-                "stock_status": h.stock_status.value,
-                "rating": str(h.rating) if h.rating is not None else None,
-                "review_count": h.review_count,
-                "summary": h.short_description,
-                "key_features": h.key_features,
-                "recommended_for": h.recommended_for,
-                "not_recommended_for": h.not_recommended_for,
-            }
-            for h in result.hits
-        ],
+        "products": [_hit_for_model(h) for h in result.hits],
     }
-    return ToolOutcome(data, [h.product_id for h in result.hits])
+    shown = [h.product_id for h in result.hits]
+    if result.cheapest_above_budget:
+        data["cheapest_above_budget"] = [_hit_for_model(h) for h in result.cheapest_above_budget]
+        data["note"] = (
+            "No product matches within max_price. cheapest_above_budget lists the CHEAPEST "
+            "products that match every other filter, cheapest first."
+        )
+        shown += [h.product_id for h in result.cheapest_above_budget]
+    return ToolOutcome(data, shown)
+
+
+def _hit_for_model(h: SearchHit) -> dict[str, Any]:
+    return {
+        "product_id": h.product_id,
+        "name": h.name,
+        "sku": h.sku,
+        "brand": h.brand,
+        "category": f"{h.category} > {h.subcategory}",
+        "price": f"{h.currency} {h.current_price}",
+        "list_price": f"{h.currency} {h.list_price}",
+        "discount_percent": h.discount_percent,
+        "stock": h.available,
+        "stock_status": h.stock_status.value,
+        "rating": str(h.rating) if h.rating is not None else None,
+        "review_count": h.review_count,
+        "summary": h.short_description,
+        "key_features": h.key_features,
+        "recommended_for": h.recommended_for,
+        "not_recommended_for": h.not_recommended_for,
+    }
 
 
 # --- get_product ------------------------------------------------------------------------------
@@ -252,7 +261,9 @@ def _get_product(ctx: ToolContext, args: GetProductArgs) -> ToolOutcome:
 
 
 def _money(amount: Decimal) -> str:
-    return f"USD {amount}"
+    """Spanish (es-UY) format, the same as the UI: USD 1.234,56."""
+    us = f"{amount:,.2f}"  # 1,234.56
+    return "USD " + us.replace(",", "_").replace(".", ",").replace("_", ".")
 
 
 def _cart_for_model(view: CartView) -> dict[str, Any]:

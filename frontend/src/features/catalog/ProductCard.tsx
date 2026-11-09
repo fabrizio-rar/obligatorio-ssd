@@ -11,20 +11,20 @@ import { Price, Rating, StockBadge } from './ProductMeta'
 /** Catalog grid card. Every field comes from the API (price, stock and image from the DB). */
 export function ProductCard({ product }: { product: ProductCardData }) {
   return (
-    <Card className="h-full gap-3 pt-0">
+    <Card className="group h-full gap-3 pt-0 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/10 hover:ring-primary/30">
       <Link to={`/products/${product.product_id}`} className="block overflow-hidden rounded-t-xl">
         <ProductImage
           src={product.image_url}
           alt={product.name}
           category={product.category}
-          className="aspect-[4/3] w-full"
+          className="aspect-[4/3] w-full transition-transform duration-300 group-hover:scale-[1.03]"
         />
       </Link>
       <CardContent className="flex flex-1 flex-col gap-1.5">
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs font-medium text-primary/80">
           {translateCategory(product.category)} · {translateSubcategory(product.subcategory)}
         </p>
-        <Link to={`/products/${product.product_id}`} className="font-medium leading-snug hover:underline">
+        <Link to={`/products/${product.product_id}`} className="font-medium leading-snug hover:text-primary">
           {product.name}
         </Link>
         <p className="text-xs text-muted-foreground">{product.brand}</p>

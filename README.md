@@ -64,6 +64,7 @@ Rutas públicas (catálogo):
 
 ```bash
 curl "localhost:8000/api/products?category=Headphones&page_size=5"
+curl "localhost:8000/api/products?category=Headphones&max_price=200&in_stock=true"
 curl  localhost:8000/api/products/MN-HDP-0004          # detalle + stock por sucursal + relacionados
 curl "localhost:8000/api/products/compare?ids=MN-HDP-0002,MN-HDP-0024"
 curl  localhost:8000/api/categories
@@ -97,7 +98,7 @@ Para seguir una conversación, mandá el `conversation_id` que devolvió la resp
 |---|---|---|
 | Salud | `GET /api/health` | — |
 | Auth | `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` | logout y me |
-| Catálogo | `GET /api/products` (`?category=`, `?page=`, `?ids=a,b`), `GET /api/products/{id}`, `GET /api/products/compare?ids=`, `GET /api/categories`, `GET /api/warehouses` | — |
+| Catálogo | `GET /api/products` (`?category=`, `?brand=`, `?min_price=`, `?max_price=`, `?in_stock=true`, `?sort=price_asc`, `?page=`, `?ids=a,b`), `GET /api/products/{id}`, `GET /api/products/compare?ids=`, `GET /api/categories`, `GET /api/brands?category=`, `GET /api/warehouses` | — |
 | Carrito | `GET /api/cart`, `POST /api/cart/items`, `PATCH /api/cart/items/{id}`, `DELETE /api/cart/items/{id}`, `DELETE /api/cart` | ✔ |
 | Asistente | `POST /api/chat`, `GET /api/conversations`, `GET /api/conversations/{id}/messages` | ✔ |
 | Voz | `POST /api/transcribe` (multipart `file`: webm, ogg, mp4/m4a, mp3, wav) → `{text}`; el texto se manda después a `/api/chat` | ✔ |

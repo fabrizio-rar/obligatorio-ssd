@@ -1,6 +1,8 @@
-"""Public catalog endpoints (no login): listing, detail, cards, categories, warehouses.
+"""Public catalog endpoints (no login): listing, detail, cards, categories, brands,
+warehouses.
 Only HTTP here: the logic is in domain/catalog.py, the same one the agent tools use."""
 
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -9,9 +11,11 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.domain import catalog
 from app.domain.catalog import (
+    BrandOut,
     CategoryOut,
     ProductDetail,
     ProductPage,
+    ProductSort,
     ProductStatus,
     RelatedProduct,
     RelationType,
@@ -37,19 +41,40 @@ def list_products(
     category: Annotated[Category | None, Query(description="Dataset name, e.g. Headphones")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=catalog.MAX_PAGE_SIZE)] = 24,
+    brand: Annotated[str | None, Query(description="Brand name, as in GET /api/brands")] = None,
+    min_price: Annotated[Decimal | None, Query(description="Current price, USD")] = None,
+    max_price: Annotated[Decimal | None, Query(description="Current price, USD")] = None,
+    in_stock: Annotated[bool, Query(description="Only products with stock")] = False,
+    sort: Annotated[ProductSort, Query(description="Order of the listing")] = ProductSort.DEFAULT,
     ids: Annotated[
         str | None, Query(description="Comma-separated IDs, for the chat cards (max 20)")
     ] = None,
 ):
     if ids is not None:
-        if category is not None:
-            raise DomainError("INVALID_INPUT", "Use either ids or category, not both")
+        filtered = (
+            category
+            or brand
+            or min_price is not None
+            or max_price is not None
+            or in_stock
+            or sort != ProductSort.DEFAULT
+        )
+        if filtered:
+            raise DomainError("INVALID_INPUT", "Use either ids or the filters, not both")
         cards = catalog.product_cards(db, [i.strip() for i in ids.split(",") if i.strip()])
         return ProductPage(
             items=cards, page=1, page_size=len(cards), total=len(cards), total_pages=1
         )
     return catalog.list_products(
-        db, category.value if category else None, page=page, page_size=page_size
+        db,
+        category.value if category else None,
+        page=page,
+        page_size=page_size,
+        brand=brand,
+        min_price=min_price,
+        max_price=max_price,
+        in_stock=in_stock,
+        sort=sort,
     )
 
 
@@ -80,6 +105,14 @@ def product_detail(product_id: str, db: Db):
 @router.get("/categories", response_model=list[CategoryOut])
 def categories(db: Db):
     return catalog.list_categories(db)
+
+
+@router.get("/brands", response_model=list[BrandOut])
+def brands(
+    db: Db,
+    category: Annotated[Category | None, Query(description="Only brands in this category")] = None,
+):
+    return catalog.list_brands(db, category.value if category else None)
 
 
 @router.get("/warehouses", response_model=list[WarehouseOut])

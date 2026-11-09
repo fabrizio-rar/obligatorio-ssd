@@ -20,7 +20,7 @@
 | Auth | **Login falso**: register y login con usuario y contraseña (hash bcrypt) y token opaco en la DB |
 | Base de datos | **PostgreSQL 16 + pgvector**: datos operacionales y vectores en el mismo motor |
 | Ingesta | Script idempotente: las **8 hojas** del Excel → validación → tablas SQL normalizadas → embeddings |
-| Búsqueda | **Solo por chat** (sin buscador ni filtros en la UI). **Híbrida**: filtros SQL (categoría, precio, stock, activo) + vectorial + usos recomendados como señal, fusionadas con RRF. Full-text = extra E5 (§9.5) |
+| Búsqueda | **Solo por chat** (sin buscador de texto en la UI; el catálogo solo tiene filtros de categoría, marca, precio y stock). **Híbrida**: filtros SQL (categoría, precio, stock, activo) + vectorial + usos recomendados como señal, fusionadas con RRF. Full-text = extra E5 (§9.5) |
 | Chunking | **1 documento por producto** (las descripciones tienen 170–280 caracteres), sin precio ni stock |
 | Embeddings | **OpenAI `text-embedding-3-small`** (multilingüe): el catálogo está **en inglés** y el usuario habla **en español**. Un vector por producto |
 | LLM | **OpenAI `gpt-6-luna`** vía **Responses API** (function calling + structured outputs), detrás de una interfaz `LLMProvider`. ~USD 0,002 por turno |
@@ -41,13 +41,13 @@
 | Ingesta del Excel | ✅ 8 hojas, validación, reporte (0 rechazadas, 17 inactivos, 22 sin stock, 3 nombres duplicados, 37 specs N/D) | `app/ingest/`, `scripts/ingest.py` |
 | Embeddings + búsqueda | ✅ 360 vectores (`text-embedding-3-small`) + `search()` (filtros SQL + vector + usos, RRF) | `app/retrieval/` |
 | Auth | ✅ register / login / logout / me, bcrypt, token con hash, `demo` / `demo1234` | `app/auth/`, `/api/auth/*` |
-| Catálogo | ✅ listado por categoría, detalle con stock por sucursal y relacionados, tarjetas por IDs, comparación, categorías, sucursales | `app/domain/catalog.py`, `comparison.py`, `/api/products*` |
+| Catálogo | ✅ listado con filtros (categoría, marca, rango de precio, solo con stock), marcas, detalle con stock por sucursal y relacionados, tarjetas por IDs, comparación, categorías, sucursales | `app/domain/catalog.py`, `comparison.py`, `/api/products*` |
 | Carrito | ✅ CRUD con validación suave de stock; ítems que dejan de venderse quedan marcados | `app/domain/cart.py`, `/api/cart*` |
 | Agente + chat | ✅ `POST /api/chat` (con login, varios turnos, sin streaming), 9 tools, guardrails, stop conditions, historial | `app/agent/`, `/api/chat`, `/api/conversations*` |
 | Checkout + órdenes | ⬜ N6–N7 (§12.1, §12.2), y las tools `get_orders`, `get_order`, `start_checkout` | — |
 | Voz | ✅ `POST /api/transcribe` (API de OpenAI, ~1 s por mensaje) + botón 🎤 en la UI | `app/stt/`, `app/api/transcribe.py` |
 | Frontend | ✅ N1 (parte FE), N3, N4, N5, N11 y N12 (UI); ⬜ N6 y N7 (esperan sus endpoints) | `frontend/src/` (estado en `frontend/README.md`) |
-| Tests | ✅ 281 tests de backend (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM` + voz con `FakeTranscriber`. Faltan los de la transacción de compra y concurrencia (N6). Frontend: TS `strict` + oxlint, sin tests (§16) | `backend/tests/` |
+| Tests | ✅ 306 tests de backend (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM` + voz con `FakeTranscriber`. Faltan los de la transacción de compra y concurrencia (N6). Frontend: TS `strict` + oxlint, sin tests (§16) | `backend/tests/` |
 | Skills del coding agent | ✅ `testing`, `mercanova-review`, `add-agent-tool` | `.claude/skills/` |
 
 ---
@@ -145,7 +145,7 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 | RNF-01/02/07 | `docker compose up --build` desde un clone limpio, con migraciones e ingesta automáticas al primer arranque | ✅ backend + db + frontend (`:5173`) |
 | RNF-03 | Todo por variables de entorno, con `.env.example` versionado. Ni keys ni modelos hardcodeados | ✅ |
 | RNF-04 | Transacciones, errores tipados, UI con reintentar; la app sigue funcionando si el LLM falla | ✅ backend: errores tipados uniformes, transacciones, sin key levanta igual (chat 503) |
-| RNF-05 | §16 | 🟡 281 tests; faltan los de la compra |
+| RNF-05 | §16 | 🟡 306 tests; faltan los de la compra |
 | RNF-06 | Capas separadas, ruff + eslint, TS estricto | ✅ backend (ruff) + frontend (TS `strict` + oxlint en lugar de eslint) |
 
 ---
@@ -507,8 +507,9 @@ SearchQuery(
 2. **Ranking semántico:** top 20 por coseno dentro del conjunto filtrado.
 3. **Ranking por usos:** los candidatos que tienen los usos pedidos, por cantidad de coincidencias. **Es una señal de ranking, no un filtro:** un uso mal elegido empeora el orden pero nunca deja el resultado vacío. Así, el ejemplo de la letra con `video calls` en auriculares pasó de 0 resultados a 5.
 4. **Fusión RRF** (`k = 60`) de los rankings 2 y 3, con desempate por rating y luego por cantidad de reviews. Los candidatos que no están en ningún ranking (por ejemplo, un producto todavía sin embedding) no se ocultan: van al final.
-5. **Fallback:** si falla el embedding de la consulta, se rankea por usos y rating y el resultado avisa con `semantic_used: false`.
-6. **Resultado:** precio y stock **leídos de la DB** (nunca del índice), más SKU (por los nombres duplicados), estado de stock y usos que matchearon. Los errores son `DomainError` tipados (por ejemplo `UNKNOWN_BRAND`, con las marcas válidas en `details`).
+5. **Nada dentro del presupuesto:** si `max_price` deja 0 candidatos, el resultado trae `cheapest_above_budget`: los 3 productos **más baratos** que cumplen todos los demás filtros, ordenados por precio. El ranking normal es por relevancia, así que sin esto el agente no puede saber cuál es "el más barato": con "auriculares por menos de USD 20" decía que el más barato era el Orbit Sound 458 (USD 71,31) cuando hay uno a USD 29,18.
+6. **Fallback:** si falla el embedding de la consulta, se rankea por usos y rating y el resultado avisa con `semantic_used: false`.
+7. **Resultado:** precio y stock **leídos de la DB** (nunca del índice), más SKU (por los nombres duplicados), estado de stock y usos que matchearon. Los errores son `DomainError` tipados (por ejemplo `UNKNOWN_BRAND`, con las marcas válidas en `details`).
 
 Probar a mano: `python -m scripts.search "comfortable headphones for video calls" --category Headphones --max-price 200 --use calls`.
 
@@ -806,6 +807,8 @@ async def run_turn(user, conversation_id, text) -> AsyncIterator[Event]:
 - **`get_related_products` y `compare_products` (08/11, real):** "¿Tienen el Nimbus Sound 691?" → `get_product` (sin stock) + `alternative_to` → ofrece **Quanta Quiet 27** y Nimbus Air 753 (las curadas del dataset). "¿Cuál me conviene para viajar en avión, el Orbit 458 o el Quanta 638?" → `compare_products` → "para viajar, el Quanta: ANC, 45 h…; el Orbit es más barato pero no tiene ANC y el catálogo lo marca como no recomendado para avión" (no recita la tabla, no declara un ganador absoluto). Auriculares vs. laptop → explica que no se comparan. "¿Qué accesorios para esa laptop?" → `accessory_for` → las webcams curadas (hizo falta una regla explícita en "Which tool": la primera vez usó `search_products`).
 - **Bug encontrado solo con la API real:** OpenAI rechazó el schema de `get_related_products` (`$ref cannot have keywords {description}`): un enum **obligatorio** con descripción. `FakeLLM` no valida schemas, así que los tests no lo veían. Se arregló en `agent/llm/schema.py` (el `$ref` se envuelve en `anyOf`) y hay un test que recorre los schemas de **todas** las tools buscando ese patrón.
 
+- **No inventar lo que la tienda no ofrece (09/11, real):** con "una computadora gamer por menos de USD 400" (0 resultados) el agente ofreció "buscar opciones usadas", y el catálogo no tiene ni usados ni reacondicionados. Se agregó al prompt: **todos los productos son nuevos**; nunca ofrecer usados, reacondicionados, otras tiendas, cuotas, avisos de stock ni servicios que ninguna tool provea (tampoco en `suggested_replies`). Si el presupuesto deja 0 resultados, se usa `cheapest_above_budget` (§9.5) para decir el precio real más cercano, sin buscar de nuevo. Pruebas reales: gamer < USD 400 → "la más barata es la Flux Edge 15 8/256, a USD 878.86" (1 tool, coincide con la DB); auriculares < USD 20 → Flux Pulse 749 a USD 29.18 (el más barato real); "¿tienen usadas o reacondicionadas? ¿cuotas?" → "los productos de MercaNova son nuevos; las cuotas no están disponibles".
+
 ### 10.10 Skills de la aplicación (🟡 opcional)
 Markdown con instrucciones por tarea (`compare.md`, `checkout.md`, `clarify.md`) que se cargan solo cuando hacen falta. Mantienen corto el system prompt, lo que ayuda a un modelo chico, y suman el concepto de "Skills".
 
@@ -854,11 +857,12 @@ sequenceDiagram
 | POST | `/api/auth/login` | — | → `{token, user}` |
 | POST | `/api/auth/logout` | ✔ | Borra el token |
 | GET | `/api/auth/me` | ✔ | |
-| GET | `/api/products?category=&page=&page_size=` | — | Catálogo paginado, **solo activos**. Sin `q` ni otros filtros: **la búsqueda es solo por chat** (§9.5); más filtros, si hacen falta, después |
+| GET | `/api/products?category=&brand=&min_price=&max_price=&in_stock=&sort=&page=&page_size=` | — | Catálogo paginado, **solo activos**. `sort`: `default` (categoría y nombre), `name_asc`, `name_desc`, `price_asc`, `price_desc`; siempre desempata por ID, así las páginas no repiten ni pierden productos. Filtros combinables: marca (nombre, como en `/api/brands`; una inexistente no matchea nada), rango sobre el precio actual (inclusivo; `min_price > max_price` o negativo → 422 `INVALID_INPUT`) y `in_stock=true`. Sin `q`: **la búsqueda en lenguaje natural es solo por chat** (§9.5) |
 | GET | `/api/products/{id}` | — | Detalle + specs + stock por sucursal + `alternatives` / `accessories` / `often_bought_with` (activos y con stock). Inactivo → `status: discontinued`, sin precio ni stock, solo alternativas. Usa `domain/catalog.py`, igual que la tool `get_product` |
 | GET | `/api/products/compare?ids=a,b[,c,d]` | — | Tabla comparativa (2–4 productos de la misma categoría): la misma función que la tool `compare_products`. 422 `MIXED_CATEGORIES` / `INVALID_INPUT`, 409 `INACTIVE` |
 | GET | `/api/products?ids=a,b,c` | — | Para las tarjetas del chat (máx. 20, en el mismo orden; omite inactivos e inexistentes). No se combina con `category` |
 | GET | `/api/categories` | — | |
+| GET | `/api/brands?category=` | — | Marcas con productos activos (en la categoría, si se pasa), por nombre, con `product_count`: las opciones del filtro de marca |
 | GET/POST/PATCH/DELETE | `/api/cart`, `/api/cart/items[/{product_id}]` | ✔ | Carrito. Cada mutación devuelve el carrito actualizado (`items` con precio y stock actuales, `item_count`, `total`, `can_checkout`). Errores: 404 `NOT_FOUND` / `NOT_IN_CART`, 409 `INACTIVE` / `OUT_OF_STOCK` (con `available` e `in_cart`), 422 cantidad inválida. 🟡 `undo_token` llega con E3 |
 | DELETE | `/api/cart` | ✔ | Vaciar carrito (lo usa el botón de confirmación de nivel 3) |
 | POST | `/api/cart/undo/{token}` | ✔ | Deshacer el último cambio |
@@ -971,7 +975,7 @@ Las reglas de asignación (greedy y sucursal única) viven en `domain/inventory.
 **i18n:** categorías, subcategorías, nombres de atributos y estados de stock traducidos con un diccionario; nombres de producto y valores en su forma original.
 
 **Implementado (08/11)** (detalle en `frontend/README.md`): login/registro, catálogo con chips de categoría y paginación, detalle con tabs y relacionados, drawer del carrito, chat lateral persistente (tarjetas, tabla comparativa, aclaraciones, chips, reintentar, tarjeta de nivel 3, "ver tools usadas", historial), `/compare` y voz 🎤. Diferencias con la tabla de arriba:
-- **Sin buscador ni filtros de precio/marca/stock en el catálogo:** la búsqueda es solo por chat (§0, §9.5) y `GET /api/products` filtra solo por categoría.
+- **Sin buscador de texto:** la búsqueda en lenguaje natural es solo por chat (§0, §9.5). Los filtros del catálogo (chips de categoría + barra con marca, precio desde/hasta y "Solo con stock") viven en la URL y vuelven a la página 1 al cambiar; cambiar de categoría descarta la marca. "Ordenar por" (categoría, nombre A - Z / Z - A, precio menor a mayor / mayor a menor) también va en la URL y no se borra con "Limpiar filtros".
 - Sin estado en vivo (SSE, E2): spinner mientras corre el turno.
 - Falta: Checkout, Confirmación y Mis órdenes (N6–N7; el botón "Continuar al checkout" está deshabilitado), toast de Deshacer (E3) y `checkout_prefill` (E4).
 - Los nombres de atributos de specs todavía no se traducen (solo los grupos).
@@ -1139,7 +1143,7 @@ La letra pide *"una estrategia de testing adecuada a la arquitectura elegida y c
 **Costo:** cada corrida completa de evals cuesta centavos con `gpt-6-luna`; se corren a mano, nunca en CI.
 🟡 CI opcional: GitHub Actions con `ruff` + `pytest` (sin evals).
 
-**Implementado (08/11):** 281 tests (`tests/unit/` + `tests/integration/`, Postgres real `mercanova_test`): ingesta, retrieval, búsqueda, auth, catálogo, carrito, comparación y relacionados, historial, voz, schema estricto de las tools y el agente con `FakeLLM` (pipeline, stop conditions, nivel 3 sin ejecutar, IDs validados). Faltan: transacción de compra, concurrencia y `PRICE_CHANGED` (N6), y las evals (E1). El frontend no tiene tests (no se piden E2E).
+**Implementado (08/11):** 306 tests (`tests/unit/` + `tests/integration/`, Postgres real `mercanova_test`): ingesta, retrieval, búsqueda, auth, catálogo, carrito, comparación y relacionados, historial, voz, schema estricto de las tools y el agente con `FakeLLM` (pipeline, stop conditions, nivel 3 sin ejecutar, IDs validados). Faltan: transacción de compra, concurrencia y `PRICE_CHANGED` (N6), y las evals (E1). El frontend no tiene tests (no se piden E2E).
 
 ---
 
@@ -1236,7 +1240,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N1 | Monorepo + `docker compose up` (db, backend, frontend) + `.env.example` | RNF-01/02/03/07 | C | ✅ |
 | N2 | Ingesta de las 8 hojas + reporte | §8 | A | ✅ |
 | N3 | Login y register simples | — | A + C | ✅ backend (token con hash, demo seed) + UI (login, registro, sesión, 401 → login) |
-| N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C | ✅ backend (`/products`, detalle con relacionados, `/categories`, `/warehouses`) + UI (grilla por categoría, detalle con tabs). Filtros por marca/precio/stock: la API todavía no los tiene |
+| N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C | ✅ backend (`/products`, detalle con relacionados, `/categories`, `/warehouses`) + UI (grilla con filtros de categoría, marca, precio y stock; detalle con tabs). `/api/brands` para el filtro de marca |
 | N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C | ✅ backend ✅ (`domain/cart.py` + `/api/cart*`, validación suave contra el stock total) + tools del agente ✅ + UI ✅ (drawer, +/−, quitar, vaciar con confirmación, avisos de stock) |
 | N6 | Checkout con **envío y retiro** + modal de confirmación (acción, productos, cantidades, precios, total) + transacción con **revalidación de precio, stock y activo** + asignación por sucursal | RF-11..15 | A + C | ⬜ |
 | N7 | Historial de órdenes | RF-16 | A + C | ⬜ |
@@ -1245,7 +1249,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B | 🟡 casi todo ✅: pipeline de 3 etapas, retry transitorio del LLM (SDK), fallbacks honestos, las 6 stop conditions (incluida confirmación humana), historial y tool results recortados, IDs validados contra tools + DB, tarjetas desde `/api/products?ids=`, ninguna tool compra, quitar/vaciar con confirmación. Falta: retry ante errores transitorios de la DB |
 | N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ✅ tarjetas por ID, tabla comparativa (`comparison_ids` → `/api/products/compare`, en el chat y en `/compare`), aclaraciones, chips, reintentar, confirmación de nivel 3, `refresh_cart`, "ver tools usadas", historial |
 | N12 | Voz (API de OpenAI + botón 🎤) | RF-08 | B + C | ✅ backend (`POST /api/transcribe` con la API de OpenAI, §11) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input) |
-| N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | 🟡 dominio ✅, API ✅, agente con FakeLLM ✅ (281 tests); faltan transacción de compra y concurrencia (N6) |
+| N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | 🟡 dominio ✅, API ✅, agente con FakeLLM ✅ (306 tests); faltan transacción de compra y concurrencia (N6) |
 | N14 | `AGENTS.md` + 2 skills | §17 | Todos | ✅ `AGENTS.md` + `CLAUDE.md` + 3 skills (`testing`, `mercanova-review`, `add-agent-tool`) + evidencia en `docs/evidence/` |
 
 **Extras (en orden de prioridad; se cortan desde el final):**
