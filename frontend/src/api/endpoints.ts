@@ -2,6 +2,8 @@ import { api } from './client'
 import type {
   Brand,
   Cart,
+  CheckoutOptions,
+  CheckoutRequest,
   Category,
   ChatTurn,
   Comparison,
@@ -9,6 +11,8 @@ import type {
   ConversationMessages,
   Health,
   LoginResult,
+  Order,
+  OrderList,
   ProductDetail,
   ProductPage,
   Transcription,
@@ -115,3 +119,17 @@ export const getConversations = (limit = 20) => api<ConversationList>(`/conversa
 
 export const getConversationMessages = (conversationId: string) =>
   api<ConversationMessages>(`/conversations/${encodeURIComponent(conversationId)}/messages`)
+
+// --- Checkout and orders (login). The purchase is ONLY confirmOrder, from a UI button ---
+export const getCheckoutOptions = () => api<CheckoutOptions>('/checkout/options')
+
+export const createCheckout = (request: CheckoutRequest) =>
+  api<Order>('/checkout', { method: 'POST', body: JSON.stringify(request) })
+
+export const confirmOrder = (orderId: number) => api<Order>(`/orders/${orderId}/confirm`, { method: 'POST' })
+
+export const cancelOrder = (orderId: number) => api<Order>(`/orders/${orderId}/cancel`, { method: 'POST' })
+
+export const getOrders = (limit = 20, offset = 0) => api<OrderList>(`/orders?limit=${limit}&offset=${offset}`)
+
+export const getOrder = (code: string) => api<Order>(`/orders/${encodeURIComponent(code)}`)

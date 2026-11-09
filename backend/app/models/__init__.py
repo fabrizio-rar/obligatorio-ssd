@@ -14,10 +14,14 @@ from app.models.catalog import (
     Warehouse,
 )
 from app.models.chat import AgentStateRow, ChatMessage, Conversation, ToolCallLog
+from app.models.orders import Order, OrderItem, OrderItemAllocation
 from app.models.retrieval import ProductEmbedding
 
 __all__ = [
     "Cart",
+    "Order",
+    "OrderItem",
+    "OrderItemAllocation",
     "CartItem",
     "AuthToken",
     "User",

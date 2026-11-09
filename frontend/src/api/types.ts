@@ -280,3 +280,110 @@ export interface ConversationMessages {
   title: string
   messages: StoredMessage[]
 }
+
+// --- Checkout and orders: backend/app/domain/checkout.py ---------------------------------------
+export type DeliveryMethod = 'SHIPPING' | 'PICKUP'
+export type PaymentMethod = 'CARD' | 'BANK_TRANSFER' | 'CASH_ON_PICKUP' // simulated: no card data
+export type OrderStatus = 'PENDING_CONFIRMATION' | 'CONFIRMED' | 'CANCELLED'
+
+export interface ShippingAddress {
+  street: string
+  city: string
+  department: string
+}
+
+export interface CheckoutRequest {
+  customer_name: string
+  email: string
+  delivery_method: DeliveryMethod
+  shipping_address: ShippingAddress | null
+  pickup_warehouse_id: string | null
+  payment_method: PaymentMethod
+}
+
+export interface WarehouseRef {
+  warehouse_id: string
+  name: string
+  city: string | null
+  department: string | null
+}
+
+export interface MissingItem {
+  product_id: string
+  name: string
+  requested: number
+  available: number
+}
+
+export interface PickupOption extends WarehouseRef {
+  can_fulfill: boolean // has stock of the whole cart
+  missing: MissingItem[]
+}
+
+export interface CheckoutOptions {
+  currency: string
+  subtotal: string
+  item_count: number
+  shipping: { cost: string; base_cost: string; free_from: string } // cost: for this cart
+  pickup: PickupOption[] // the ones that cover the whole cart first
+  payment_methods: PaymentMethod[]
+}
+
+export interface OrderItem {
+  product_id: string
+  name: string // frozen at checkout
+  sku: string
+  category: string | null
+  image_url: string | null
+  unit_price: string // frozen at checkout, revalidated at confirmation
+  quantity: number
+  line_total: string
+  allocations: { warehouse_id: string; warehouse_name: string; quantity: number }[]
+}
+
+export interface Order {
+  order_id: number
+  code: string // MN-ORD-000123
+  status: OrderStatus
+  created_at: string
+  confirmed_at: string | null
+  cancelled_at: string | null
+  customer_name: string
+  email: string
+  delivery_method: DeliveryMethod
+  shipping_address: ShippingAddress | null
+  pickup_warehouse: WarehouseRef | null
+  payment_method: PaymentMethod
+  currency: string
+  items: OrderItem[]
+  item_count: number
+  subtotal: string
+  shipping_cost: string
+  total: string
+}
+
+export interface OrderSummary {
+  order_id: number
+  code: string
+  status: OrderStatus
+  created_at: string
+  confirmed_at: string | null
+  delivery_method: DeliveryMethod
+  item_count: number
+  product_names: string[] // first 3
+  currency: string
+  total: string
+}
+
+export interface OrderList {
+  items: OrderSummary[]
+  total: number
+}
+
+/** details of a 409 PRICE_CHANGED: the pending order already has the new prices. */
+export interface PriceChange {
+  product_id: string
+  name: string
+  old_price: string
+  new_price: string
+}

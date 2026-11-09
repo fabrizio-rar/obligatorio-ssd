@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { LogOutIcon, UserIcon } from 'lucide-react'
+import { LogOutIcon, PackageIcon, UserIcon } from 'lucide-react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 
 import { getMe, logout } from '@/api/endpoints'
@@ -42,6 +42,13 @@ export function UserMenu() {
 
   return (
     <div className="flex items-center gap-2">
+      <Link
+        to="/orders"
+        className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'text-white/85 hover:bg-white/15 hover:text-white')}
+      >
+        <PackageIcon data-icon="inline-start" />
+        Mis órdenes
+      </Link>
       <span className="flex items-center gap-1.5 text-sm text-white/85">
         <span className="flex size-7 items-center justify-center rounded-full bg-white/15">
           <UserIcon className="size-4" />

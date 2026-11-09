@@ -1,6 +1,6 @@
 import { MinusIcon, PlusIcon, ShoppingCartIcon, Trash2Icon } from 'lucide-react'
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 import { MAX_QUANTITY_PER_ITEM, type Cart, type CartItem } from '@/api/types'
 import {
@@ -82,7 +82,7 @@ export function CartSheet() {
                 ))}
               </ul>
             </ScrollArea>
-            <CartSummary cart={cart.data} />
+            <CartSummary cart={cart.data} onCheckout={() => setOpen(false)} />
           </>
         )}
       </SheetContent>
@@ -175,7 +175,8 @@ function CartLine({ item, onNavigate }: { item: CartItem; onNavigate: () => void
   )
 }
 
-function CartSummary({ cart }: { cart: Cart }) {
+function CartSummary({ cart, onCheckout }: { cart: Cart; onCheckout: () => void }) {
+  const navigate = useNavigate()
   const clear = useClearCart()
   const [confirmOpen, setConfirmOpen] = useState(false)
 
@@ -188,9 +189,15 @@ function CartSummary({ cart }: { cart: Cart }) {
       {!cart.can_checkout && (
         <p className="text-xs text-destructive">Resolvé los avisos de arriba para poder comprar.</p>
       )}
-      {/* N6: checkout endpoints are not in the backend yet */}
-      <Button disabled title="El checkout llega con los endpoints de N6">
-        Continuar al checkout (próximamente)
+      <Button
+        size="lg"
+        disabled={!cart.can_checkout}
+        onClick={() => {
+          onCheckout()
+          navigate('/checkout')
+        }}
+      >
+        Continuar al checkout
       </Button>
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogTrigger render={<Button variant="ghost" disabled={clear.isPending} />}>

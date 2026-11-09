@@ -1,5 +1,6 @@
 """Application settings, read from environment variables (see .env.example)."""
 
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -22,6 +23,11 @@ class Settings(BaseSettings):
     # Auth (docs/PLAN.md §7.2, §12)
     auth_token_ttl_hours: int = Field(default=72, gt=0)
     seed_demo_user: bool = True
+
+    # Checkout (docs/PLAN.md §12.2): fixed shipping cost, free from a subtotal; pickup is free.
+    # The dataset has no shipping cost: these are our assumption, documented in the PLAN.
+    shipping_cost_usd: Decimal = Field(default=Decimal("8.00"), ge=0)
+    free_shipping_from_usd: Decimal = Field(default=Decimal("200.00"), ge=0)
 
     # OpenAI: optional so the app starts without it (chat and semantic search are disabled)
     openai_api_key: SecretStr | None = None

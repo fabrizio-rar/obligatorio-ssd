@@ -12,7 +12,6 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -33,6 +32,7 @@ from app.domain.catalog import (
 )
 from app.domain.comparison import MAX_PRODUCTS, MIN_PRODUCTS, compare
 from app.domain.errors import DomainError
+from app.domain.money import format_usd
 from app.retrieval.embeddings import Embedder
 from app.retrieval.search import SearchHit, SearchQuery, search
 from app.retrieval.vocabulary import (
@@ -260,10 +260,7 @@ def _get_product(ctx: ToolContext, args: GetProductArgs) -> ToolOutcome:
 # --- Cart tools (docs/PLAN.md §10.4.1: level 1 read, level 2 reversible, level 3 confirm) --
 
 
-def _money(amount: Decimal) -> str:
-    """Spanish (es-UY) format, the same as the UI: USD 1.234,56."""
-    us = f"{amount:,.2f}"  # 1,234.56
-    return "USD " + us.replace(",", "_").replace(".", ",").replace("_", ".")
+_money = format_usd  # USD 1.234,56, the same format as the UI
 
 
 def _cart_for_model(view: CartView) -> dict[str, Any]:

@@ -4,7 +4,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 
 Obligatorio 2 de **Sistemas de Soporte de Decisión** (ORT, 2026).
 
-> **Estado (08/11/2026):** backend del núcleo funcionando (catálogo, auth, carrito, búsqueda RAG y agente con 9 tools). Frontend en http://localhost:5173 con login, catálogo, detalle, carrito y chat (tarjetas, comparación, confirmaciones, historial y voz 🎤). Faltan el checkout y las órdenes. Detalle en [`docs/PLAN.md` §0.1](docs/PLAN.md#01-estado-de-la-implementación-0811).
+> **Estado (09/11/2026):** el núcleo compra de punta a punta: catálogo con filtros, auth, carrito, asistente (búsqueda RAG, comparación, carrito por chat, voz 🎤) y checkout con envío o retiro en sucursal, confirmación y "Mis órdenes". Faltan las tools del agente para órdenes y los extras. Detalle en [`docs/PLAN.md` §0.1](docs/PLAN.md#01-estado-de-la-implementación-0811).
 
 ---
 
@@ -100,6 +100,7 @@ Para seguir una conversación, mandá el `conversation_id` que devolvió la resp
 | Auth | `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` | logout y me |
 | Catálogo | `GET /api/products` (`?category=`, `?brand=`, `?min_price=`, `?max_price=`, `?in_stock=true`, `?sort=price_asc`, `?page=`, `?ids=a,b`), `GET /api/products/{id}`, `GET /api/products/compare?ids=`, `GET /api/categories`, `GET /api/brands?category=`, `GET /api/warehouses` | — |
 | Carrito | `GET /api/cart`, `POST /api/cart/items`, `PATCH /api/cart/items/{id}`, `DELETE /api/cart/items/{id}`, `DELETE /api/cart` | ✔ |
+| Checkout y órdenes | `GET /api/checkout/options`, `POST /api/checkout`, `POST /api/orders/{id}/confirm`, `POST /api/orders/{id}/cancel`, `GET /api/orders`, `GET /api/orders/{code}` | ✔ |
 | Asistente | `POST /api/chat`, `GET /api/conversations`, `GET /api/conversations/{id}/messages` | ✔ |
 | Voz | `POST /api/transcribe` (multipart `file`: webm, ogg, mp4/m4a, mp3, wav) → `{text}`; el texto se manda después a `/api/chat` | ✔ |
 
@@ -127,6 +128,7 @@ docker compose exec backend python -m scripts.ingest --reset         # re-ingest
 docker compose exec backend python -m scripts.index_embeddings       # embeddings (solo lo que cambió)
 docker compose exec backend python -m scripts.index_embeddings --force
 docker compose exec backend python -m scripts.seed_demo_user
+docker compose exec backend python -m scripts.simulate_price_change MN-HDP-0004 --percent -10   # demo: el precio cambia antes de confirmar
 
 # Probar la búsqueda y el agente desde la terminal
 docker compose exec backend python -m scripts.search "headphones for video calls" \
@@ -161,6 +163,7 @@ Están todas en [`.env.example`](.env.example), con un comentario cada una. Las 
 | `STT_MODEL`, `STT_MAX_BYTES` | Voz: `gpt-4o-transcribe`, audio de hasta 2 MB |
 | `AGENT_MAX_STEPS`, `AGENT_TURN_TIMEOUT_SECONDS`, `AGENT_MAX_TOKENS_PER_TURN` | Límites de cada turno del agente |
 | `POSTGRES_*`, `DATABASE_URL`, `TEST_DATABASE_URL` | Base de datos |
+| `SHIPPING_COST_USD`, `FREE_SHIPPING_FROM_USD` | Costo del envío a domicilio (USD 8) y desde qué subtotal es gratis (USD 200) |
 | `SEED_DEMO_USER`, `AUTH_TOKEN_TTL_HOURS` | Usuario demo y duración de la sesión |
 
 ---
@@ -179,7 +182,7 @@ backend/
     ingest/       # Excel -> validación -> Postgres
     models/       # SQLAlchemy
   alembic/        # migraciones
-  scripts/        # ingest, index_embeddings, search, chat, seed_demo_user
+  scripts/        # ingest, index_embeddings, search, chat, seed_demo_user, simulate_price_change
   tests/          # unit/ e integration/ (Postgres real, FakeLLM)
 frontend/src/         # detalle y estado en frontend/README.md
   api/            # cliente HTTP (token), tipos espejo del backend, endpoints

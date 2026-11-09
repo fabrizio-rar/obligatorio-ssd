@@ -133,3 +133,37 @@ export const translateSubcategory = (name: string) => SUBCATEGORIES[name] ?? nam
 export const translateStockStatus = (status: StockStatus) => STOCK_STATUS[status] ?? status
 export const translateUseCase = (useCase: string) => USE_CASES[useCase] ?? useCase
 export const translateSpecGroup = (group: string) => SPEC_GROUPS[group] ?? group
+
+const dateTimeFormat = new Intl.DateTimeFormat('es-UY', { dateStyle: 'medium', timeStyle: 'short' })
+
+/** "9 nov 2026, 00:37" in the user's time zone (the API sends UTC). */
+export const formatDateTime = (iso: string) => dateTimeFormat.format(new Date(iso))
+
+export const PAYMENT_LABELS: Record<string, string> = {
+  CARD: 'Tarjeta',
+  BANK_TRANSFER: 'Transferencia bancaria',
+  CASH_ON_PICKUP: 'Efectivo al retirar',
+}
+
+/** The 19 departments of Uruguay, for the shipping address. */
+export const URUGUAY_DEPARTMENTS = [
+  'Artigas',
+  'Canelones',
+  'Cerro Largo',
+  'Colonia',
+  'Durazno',
+  'Flores',
+  'Florida',
+  'Lavalleja',
+  'Maldonado',
+  'Montevideo',
+  'Paysandú',
+  'Río Negro',
+  'Rivera',
+  'Rocha',
+  'Salto',
+  'San José',
+  'Soriano',
+  'Tacuarembó',
+  'Treinta y Tres',
+]

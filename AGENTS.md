@@ -23,9 +23,9 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [x] Chat en el frontend (N11): tarjetas por ID (`/products?ids=`), tabla comparativa (`comparison_ids` → `/api/products/compare`, compacta en el chat y completa en `/compare`), aclaraciones, chips, reintentar, tarjeta de confirmación de nivel 3 e historial de conversaciones
 - [x] `AGENTS.md` + skills (N14): `testing`, `mercanova-review`, `add-agent-tool`
 - [x] Voz (N12): backend (`POST /api/transcribe`) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input)
-- [~] Tests (N13): 306 de backend (`pytest`, sin OpenAI). Faltan la transacción de compra y la concurrencia (llegan con N6)
+- [x] Tests (N13): 354 de backend (`pytest`, sin OpenAI), incluidos la transacción de compra y la concurrencia
 - [~] Robustez del agente (N10): todo salvo el retry ante errores transitorios de la DB
-- [ ] Checkout (N6) y órdenes (N7), backend + UI: ver `docs/PLAN.md` §12.1, §12.2 y §20.1
+- [x] Checkout (N6) y órdenes (N7): backend (`domain/checkout.py`, `/api/checkout*`, `/api/orders*`, transacción con revalidación y asignación por sucursal) + UI (`/checkout`, modal de confirmación, compra confirmada, "Mis órdenes"). Ver `docs/PLAN.md` §12.1 y §12.2. Faltan las tools `start_checkout`, `get_orders` y `get_order` (N9)
 
 > Cuando se complete un ítem del núcleo, actualizá esta checklist **y** la columna "Estado" de `docs/PLAN.md` §20.1 en el mismo cambio.
 
@@ -108,6 +108,7 @@ docker compose exec backend python -m scripts.chat --verbose "busco auriculares 
 TOKEN=$(curl -s -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' -d '{"username":"demo","password":"demo1234"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
 curl -X POST localhost:8000/api/chat -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"message": "busco auriculares"}'   # el chat requiere login
 docker compose exec backend python -m scripts.seed_demo_user   # crea demo/demo1234 si falta (idempotente)
+docker compose exec backend python -m scripts.simulate_price_change MN-HDP-0004 --percent -10   # demo de PRICE_CHANGED; scripts.ingest restaura los precios
 docker compose exec backend pytest                 # tests (sin evals); los de integración usan TEST_DATABASE_URL
 docker compose exec backend ruff check . && docker compose exec backend ruff format --check .
 docker compose exec frontend sh -c 'npx tsc -b && npx oxlint'   # frontend: tipos (TS strict) + lint; http://localhost:5173 (hot reload sobre src/)

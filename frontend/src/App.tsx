@@ -11,7 +11,10 @@ import { CartSheet } from '@/features/cart/CartSheet'
 import { CatalogPage } from '@/features/catalog/CatalogPage'
 import { ProductDetailPage } from '@/features/catalog/ProductDetailPage'
 import { ChatSidebar } from '@/features/chat/ChatPanel'
+import { CheckoutPage } from '@/features/checkout/CheckoutPage'
 import { ComparePage } from '@/features/compare/ComparePage'
+import { OrderDetailPage } from '@/features/orders/OrderDetailPage'
+import { OrdersPage } from '@/features/orders/OrdersPage'
 import { useSession } from '@/lib/session'
 
 export default function App() {
@@ -21,6 +24,9 @@ export default function App() {
         <Route index element={<CatalogPage />} />
         <Route path="products/:productId" element={<ProductDetailPage />} />
         <Route path="compare" element={<ComparePage />} />
+        <Route path="checkout" element={<CheckoutPage />} />
+        <Route path="orders" element={<OrdersPage />} />
+        <Route path="orders/:code" element={<OrderDetailPage />} />
       </Route>
       <Route path="login" element={<AuthPage mode="login" />} />
       <Route path="register" element={<AuthPage mode="register" />} />

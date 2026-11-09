@@ -6,7 +6,7 @@
 > **v3:** el LLM es **OpenAI `gpt-6-luna`** por API (Responses API). Ollama sale del stack. Embeddings y voz siguen locales.
 > **v4 (08/11):** los embeddings pasan a la **API de OpenAI** (`text-embedding-3-small`, 1536 dims) en lugar de `fastembed` local (§9.3).
 > **v5 (08/11):** la voz también pasa a la **API de OpenAI** (`gpt-4o-transcribe`) en lugar de faster-whisper local (§11).
-> **Estado (08/11):** backend y frontend del núcleo implementados salvo checkout y órdenes (N6–N7). Resumen en [0.1 Estado de la implementación](#01-estado-de-la-implementación-0811). Cómo levantarlo: `README.md`.
+> **Estado (09/11):** núcleo implementado de punta a punta (backend y frontend), incluidos checkout y órdenes (N6–N7). Faltan las tools del agente para órdenes (`start_checkout`, `get_orders`, `get_order`) y los extras. Resumen en [0.1 Estado de la implementación](#01-estado-de-la-implementación-0811). Cómo levantarlo: `README.md`.
 
 ---
 
@@ -44,10 +44,10 @@
 | Catálogo | ✅ listado con filtros (categoría, marca, rango de precio, solo con stock), marcas, detalle con stock por sucursal y relacionados, tarjetas por IDs, comparación, categorías, sucursales | `app/domain/catalog.py`, `comparison.py`, `/api/products*` |
 | Carrito | ✅ CRUD con validación suave de stock; ítems que dejan de venderse quedan marcados | `app/domain/cart.py`, `/api/cart*` |
 | Agente + chat | ✅ `POST /api/chat` (con login, varios turnos, sin streaming), 9 tools, guardrails, stop conditions, historial | `app/agent/`, `/api/chat`, `/api/conversations*` |
-| Checkout + órdenes | ⬜ N6–N7 (§12.1, §12.2), y las tools `get_orders`, `get_order`, `start_checkout` | — |
+| Checkout + órdenes | 🟡 backend ✅ (09/11): opciones, checkout, transacción de compra con revalidación y asignación por sucursal, cancelar, historial. Faltan la UI y las tools `get_orders`, `get_order`, `start_checkout` | ✅ (09/11) backend + UI: checkout (envío / retiro con disponibilidad por sucursal, pago simulado), modal de confirmación, transacción con revalidación y asignación por sucursal, pantalla de compra confirmada y "Mis órdenes". Faltan las tools `get_orders`, `get_order`, `start_checkout` | `app/domain/checkout.py`, `inventory.py`, `/api/checkout*`, `/api/orders*`, `frontend/src/features/checkout/`, `orders/` |
 | Voz | ✅ `POST /api/transcribe` (API de OpenAI, ~1 s por mensaje) + botón 🎤 en la UI | `app/stt/`, `app/api/transcribe.py` |
-| Frontend | ✅ N1 (parte FE), N3, N4, N5, N11 y N12 (UI); ⬜ N6 y N7 (esperan sus endpoints) | `frontend/src/` (estado en `frontend/README.md`) |
-| Tests | ✅ 306 tests de backend (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM` + voz con `FakeTranscriber`. Faltan los de la transacción de compra y concurrencia (N6). Frontend: TS `strict` + oxlint, sin tests (§16) | `backend/tests/` |
+| Frontend | ✅ N1 (parte FE), N3–N7, N11 y N12 (UI) | `frontend/src/` (estado en `frontend/README.md`) |
+| Tests | ✅ 354 tests de backend (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM` + voz con `FakeTranscriber`. Faltan los de la transacción de compra y concurrencia (N6). Frontend: TS `strict` + oxlint, sin tests (§16) | `backend/tests/` |
 | Skills del coding agent | ✅ `testing`, `mercanova-review`, `add-agent-tool` | `.claude/skills/` |
 
 ---
@@ -129,13 +129,13 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 | RF-07 | Información actual | Precio y stock **solo** desde tools que leen la DB, nunca desde el índice vectorial | tools | ✅ |
 | RF-08 | Voz | API de OpenAI, `gpt-4o-transcribe` (§11) | stt | ✅ `POST /api/transcribe` + botón 🎤 en la UI |
 | RF-09 | Carrito | Dominio `cart` + REST + tools (misma lógica) | domain | ✅ REST + 5 tools + UI |
-| RF-10 | Validación de disponibilidad | Al agregar (suave, contra el disponible total) y al confirmar (dura, transaccional) | domain | 🟡 suave ✅; dura (al confirmar) ⬜ N6 |
-| RF-11 | Checkout | Nombre, email, **método de entrega** (envío a domicilio con dirección, o retiro en una sucursal que tenga stock de todo el carrito), pago **simulado** | FE + domain | ⬜ |
-| RF-12 | Confirmación explícita | Orden `PENDING_CONFIRMATION` → botón "Confirmar compra" → `POST /orders/{id}/confirm` | workflow | ⬜ (el agente ya no tiene forma de comprar) |
-| RF-13 | Compra ficticia | Sin pasarela ni datos de tarjeta; el método de pago es un enum simulado | domain | ⬜ |
-| RF-14 | Orden con ID | `MN-ORD-000123`, con ítems a **precio congelado** y asignación de stock por sucursal | domain | ⬜ |
-| RF-15 | Actualización de estado | Descuento atómico de `on_hand` por sucursal en la misma transacción que la orden | domain | ⬜ |
-| RF-16 | Historial | `GET /orders` + página "Mis órdenes" + tool `get_orders` (por usuario) | API + FE + agent | ⬜ |
+| RF-10 | Validación de disponibilidad | Al agregar (suave, contra el disponible total) y al confirmar (dura, transaccional) | domain | ✅ suave al agregar; dura en la transacción de compra (backend) |
+| RF-11 | Checkout | Nombre, email, **método de entrega** (envío a domicilio con dirección, o retiro en una sucursal que tenga stock de todo el carrito), pago **simulado** | FE + domain | ✅ backend + UI (envío y retiro, pago simulado) |
+| RF-12 | Confirmación explícita | Orden `PENDING_CONFIRMATION` → botón "Confirmar compra" → `POST /orders/{id}/confirm` | workflow | ✅ modal con acción, productos, cantidades, precios y total → `POST /orders/{id}/confirm`. Ninguna tool compra |
+| RF-13 | Compra ficticia | Sin pasarela ni datos de tarjeta; el método de pago es un enum simulado | domain | ✅ (`CARD` / `BANK_TRANSFER` / `CASH_ON_PICKUP`, sin datos de tarjeta) |
+| RF-14 | Orden con ID | `MN-ORD-000123`, con ítems a **precio congelado** y asignación de stock por sucursal | domain | ✅ backend (`MN-ORD-000001`, precio congelado, asignación por sucursal) |
+| RF-15 | Actualización de estado | Descuento atómico de `on_hand` por sucursal en la misma transacción que la orden | domain | ✅ backend (descuento de `on_hand` por sucursal en la misma transacción) |
+| RF-16 | Historial | `GET /orders` + página "Mis órdenes" + tool `get_orders` (por usuario) | API + FE + agent | 🟡 `GET /orders` + página "Mis órdenes" ✅; tool `get_orders` ⬜ |
 | RF-17 | Casos límite | §15 | todos | 🟡 cubiertos los de catálogo, carrito y agente; faltan los de checkout |
 | RF-18 | No inventar | Guardrails (§10.7) | agent | ✅ guardrails + datos solo de tools |
 
@@ -145,7 +145,7 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 | RNF-01/02/07 | `docker compose up --build` desde un clone limpio, con migraciones e ingesta automáticas al primer arranque | ✅ backend + db + frontend (`:5173`) |
 | RNF-03 | Todo por variables de entorno, con `.env.example` versionado. Ni keys ni modelos hardcodeados | ✅ |
 | RNF-04 | Transacciones, errores tipados, UI con reintentar; la app sigue funcionando si el LLM falla | ✅ backend: errores tipados uniformes, transacciones, sin key levanta igual (chat 503) |
-| RNF-05 | §16 | 🟡 306 tests; faltan los de la compra |
+| RNF-05 | §16 | ✅ 354 tests, incluidos la transacción de compra y la concurrencia |
 | RNF-06 | Capas separadas, ruff + eslint, TS estricto | ✅ backend (ruff) + frontend (TS `strict` + oxlint en lugar de eslint) |
 
 ---
@@ -869,11 +869,11 @@ sequenceDiagram
 | DELETE | `/api/cart` | ✔ | Vaciar carrito (lo usa el botón de confirmación de nivel 3) |
 | POST | `/api/cart/undo/{token}` | ✔ | Deshacer el último cambio |
 | GET | `/api/warehouses` | — | Sucursales (para el detalle de producto y el checkout) |
-| GET | `/api/checkout/pickup-options` | ✔ | Sucursales de retiro con `can_fulfill` y `missing` para el carrito actual |
+| GET | `/api/checkout/options` | ✔ | Lo que necesita el formulario para el carrito actual: `subtotal`, `shipping` (`cost` para este carrito, `base_cost`, `free_from`), `pickup` (sucursales con retiro, con `can_fulfill` y `missing`; primero las que cubren todo) y `payment_methods`. Carrito vacío → 409 `EMPTY_CART`; con ítems marcados → 409 `CART_HAS_ISSUES` |
 | POST | `/api/checkout` | ✔ | `{customer_name, email, delivery_method, shipping_address?, pickup_warehouse_id?, payment_method}` → orden `PENDING_CONFIRMATION` + resumen |
-| POST | `/api/orders/{id}/confirm` | ✔ | **Transacción de compra** |
-| POST | `/api/orders/{id}/cancel` | ✔ | |
-| GET | `/api/orders`, `/api/orders/{code}` | ✔ | Historial |
+| POST | `/api/orders/{id}/confirm` | ✔ | **Transacción de compra** (§12.1). Idempotente. 409 `CART_CHANGED` / `INACTIVE` / `PRICE_CHANGED` (con `changes` y la orden actualizada) / `OUT_OF_STOCK` (con `items` y la sucursal) / `ORDER_CANCELLED`; 404 `ORDER_NOT_FOUND` (también la de otro usuario) |
+| POST | `/api/orders/{id}/cancel` | ✔ | Solo una orden pendiente (no toca stock); una confirmada → 409 `ORDER_NOT_CANCELLABLE` |
+| GET | `/api/orders?limit=&offset=`, `/api/orders/{code}` | ✔ | Historial: solo las compras (`CONFIRMED`), la más nueva primero; el detalle incluye de qué sucursal salió cada unidad |
 | GET | `/api/conversations?limit=&offset=` | ✔ | Las conversaciones del usuario, por última actividad, con `message_count` y vista previa del último mensaje. **No hay `POST`:** `POST /api/chat` sin `conversation_id` crea la conversación (botón "Nueva conversación" = mandar `null`) |
 | GET | `/api/conversations/{id}/messages` | ✔ | Rehidratar el chat: mensajes en orden; los del asistente traen `response` (`type`, `product_ids` para las tarjetas, `suggested_replies`) y `tools` (paso, tool, argumentos, error, latencia) para depurar; la UI no los muestra. La de otro usuario → 404 |
 | POST | `/api/chat/stream` | ✔ | `{conversation_id, message}` → SSE |
@@ -916,6 +916,17 @@ COMMIT;
     - **inactivo:** 409 `INACTIVE` → quitar el ítem.
 - Para poder **demostrar** el cambio de precio (los precios del dataset no cambian solos), hay un script de demo o test `scripts/simulate_price_change.py` que modifica un precio. Se documenta como herramienta de prueba.
 
+**Implementado (09/11, backend):** `domain/checkout.py` + `domain/inventory.py` (asignación pura) + `api/checkout.py`, migración `0006_orders`. Decisiones tomadas con el equipo:
+- **Pago simulado:** `CARD`, `BANK_TRANSFER` y `CASH_ON_PICKUP` (efectivo, solo con retiro; también lo exige un `CHECK`). Nunca se piden datos de tarjeta.
+- **Envío:** USD 8, **gratis desde USD 200** de subtotal (`SHIPPING_COST_USD`, `FREE_SHIPPING_FROM_USD`); el retiro es gratis. El dataset no trae costo de envío: es un supuesto nuestro.
+- **El carrito cambió entre el resumen y la confirmación** → 409 `CART_CHANGED` y se rehace el checkout: nunca se compra algo distinto de lo que el usuario vio. El carrito queda bloqueado (`FOR UPDATE`) durante la compra.
+- **Cancelar:** solo un checkout pendiente. Una orden confirmada es definitiva. Un checkout nuevo reemplaza (cancela) al pendiente anterior.
+- **Orden de la revalidación:** carrito → producto activo → precio → stock, con las filas bloqueadas (orden, carrito, precios e inventario, este siempre en el mismo orden para evitar deadlocks). Un cambio de precio **actualiza la orden pendiente** y devuelve 409 con el resumen nuevo; cualquier otro fallo hace rollback de todo.
+- **Código de orden:** columna generada por Postgres a partir del id (`MN-ORD-000001`).
+- **Demostrar el cambio de precio:** `python -m scripts.simulate_price_change MN-HDP-0004 --percent -10` (o un precio). `python -m scripts.ingest` restaura los precios del dataset.
+- **Tests:** las reglas puras (greedy, sucursal única, costo de envío, formulario) y la transacción con Postgres real: envío y retiro, rollback, `PRICE_CHANGED`, `INACTIVE`, `CART_CHANGED`, idempotencia, cancelar, aislamiento entre usuarios, `CHECK` de la DB y **dos compradores del último ítem en paralelo** (gana uno, el otro recibe `OUT_OF_STOCK`, el stock nunca queda negativo). Uno de esos tests encontró un bug: `None` en una columna `JSONB` se guardaba como JSON `null` y el `CHECK` no lo veía (se arregló con `none_as_null`).
+- **Errores de validación** de FastAPI (cuerpo, query, path) ahora salen con el formato uniforme (`INVALID_INPUT` + `details.fields`) y en español, para que el formulario los muestre junto a cada campo.
+
 ### 12.2 Métodos de entrega y asignación de stock por sucursal
 
 Los dos métodos salen del dataset: cada sucursal de `Warehouses` tiene `shipping_enabled` y `pickup_enabled`.
@@ -928,7 +939,7 @@ Los dos métodos salen del dataset: cada sucursal de `Warehouses` tiene `shippin
 | Asignación al confirmar | **Greedy**: primero la sucursal con más `available`; si no alcanza, se reparte entre varias | Todo sale de la sucursal elegida |
 | Mensaje en la confirmación | "Envío a {dirección}" | "Listo para retirar en MercaNova {sucursal}, {ciudad}" |
 
-**Opciones de retiro (`GET /api/checkout/pickup-options`):** para el carrito actual, devuelve cada sucursal con retiro habilitado junto con:
+**Opciones de retiro (`GET /api/checkout/options`, campo `pickup`):** para el carrito actual, devuelve cada sucursal con retiro habilitado junto con:
 - `can_fulfill`: si tiene stock de **todo** el carrito;
 - `missing`: qué ítems le faltan y cuántas unidades.
 
@@ -979,7 +990,7 @@ Las reglas de asignación (greedy y sucursal única) viven en `domain/inventory.
 **Implementado (08/11)** (detalle en `frontend/README.md`): login/registro, catálogo con chips de categoría y paginación, detalle con tabs y relacionados, drawer del carrito, chat lateral persistente (tarjetas, tabla comparativa, aclaraciones, chips, reintentar, tarjeta de nivel 3, historial), `/compare` y voz 🎤. Diferencias con la tabla de arriba:
 - **Sin buscador de texto:** la búsqueda en lenguaje natural es solo por chat (§0, §9.5). Los filtros del catálogo (chips de categoría + barra con marca, precio desde/hasta y "Solo con stock") viven en la URL y vuelven a la página 1 al cambiar; cambiar de categoría descarta la marca. "Ordenar por" (categoría, nombre A - Z / Z - A, precio menor a mayor / mayor a menor) también va en la URL y no se borra con "Limpiar filtros".
 - Sin estado en vivo (SSE, E2): spinner mientras corre el turno.
-- Falta: Checkout, Confirmación y Mis órdenes (N6–N7; el botón "Continuar al checkout" está deshabilitado), toast de Deshacer (E3) y `checkout_prefill` (E4).
+- **Checkout, confirmación y Mis órdenes (09/11):** `/checkout` (3 pasos: datos, entrega con las sucursales que no cubren el carrito deshabilitadas y lo que falta, pago simulado; resumen lateral) → "Revisar compra" crea la orden pendiente → `AlertDialog` con acción, productos, cantidades, precio unitario, envío, total, entrega y pago → "Confirmar compra". `PRICE_CHANGED` deja el modal abierto con el precio nuevo resaltado; los demás 409 cierran el modal con el motivo. `/orders/{code}` es también la pantalla de compra confirmada ("¡Gracias por tu compra!", de qué sucursal sale cada ítem); `/orders` lista las compras. Falta: toast de Deshacer (E3) y `checkout_prefill` (E4).
 - Los nombres de atributos de specs todavía no se traducen (solo los grupos).
 
 ---
@@ -1145,7 +1156,7 @@ La letra pide *"una estrategia de testing adecuada a la arquitectura elegida y c
 **Costo:** cada corrida completa de evals cuesta centavos con `gpt-6-luna`; se corren a mano, nunca en CI.
 🟡 CI opcional: GitHub Actions con `ruff` + `pytest` (sin evals).
 
-**Implementado (08/11):** 306 tests (`tests/unit/` + `tests/integration/`, Postgres real `mercanova_test`): ingesta, retrieval, búsqueda, auth, catálogo, carrito, comparación y relacionados, historial, voz, schema estricto de las tools y el agente con `FakeLLM` (pipeline, stop conditions, nivel 3 sin ejecutar, IDs validados). Faltan: transacción de compra, concurrencia y `PRICE_CHANGED` (N6), y las evals (E1). El frontend no tiene tests (no se piden E2E).
+**Implementado (08/11):** 354 tests (`tests/unit/` + `tests/integration/`, Postgres real `mercanova_test`): ingesta, retrieval, búsqueda, auth, catálogo, carrito, comparación y relacionados, historial, voz, schema estricto de las tools y el agente con `FakeLLM` (pipeline, stop conditions, nivel 3 sin ejecutar, IDs validados). Faltan: transacción de compra, concurrencia y `PRICE_CHANGED` (N6), y las evals (E1). El frontend no tiene tests (no se piden E2E).
 
 ---
 
@@ -1244,14 +1255,14 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N3 | Login y register simples | — | A + C | ✅ backend (token con hash, demo seed) + UI (login, registro, sesión, 401 → login) |
 | N4 | Catálogo + detalle (filtra inactivos, muestra stock) | RF-01 | A + C | ✅ backend (`/products`, detalle con relacionados, `/categories`, `/warehouses`) + UI (grilla con filtros de categoría, marca, precio y stock; detalle con tabs). `/api/brands` para el filtro de marca |
 | N5 | Carrito (agregar, cambiar cantidad, quitar, total, validar stock) | RF-09/10 | A + C | ✅ backend ✅ (`domain/cart.py` + `/api/cart*`, validación suave contra el stock total) + tools del agente ✅ + UI ✅ (drawer, +/−, quitar, vaciar con confirmación, avisos de stock) |
-| N6 | Checkout con **envío y retiro** + modal de confirmación (acción, productos, cantidades, precios, total) + transacción con **revalidación de precio, stock y activo** + asignación por sucursal | RF-11..15 | A + C | ⬜ |
-| N7 | Historial de órdenes | RF-16 | A + C | ⬜ |
+| N6 | Checkout con **envío y retiro** + modal de confirmación (acción, productos, cantidades, precios, total) + transacción con **revalidación de precio, stock y activo** + asignación por sucursal | RF-11..15 | A + C | ✅ (09/11, §12.1): backend + UI (checkout, modal de confirmación, `PRICE_CHANGED` con el precio nuevo resaltado, errores de stock) |
+| N7 | Historial de órdenes | RF-16 | A + C | ✅ backend (`GET /api/orders`, `/api/orders/{code}`) + UI ("Mis órdenes" y detalle con la sucursal de origen) |
 | N8 | Búsqueda: filtros SQL + **vectorial** (embeddings multilingües) | RF-02 | B | ✅ `retrieval/search.py` (la tool la conecta N9) |
 | N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | 🟡 loop + `POST /api/chat` + 9 tools: `search_products`, `get_product`, `get_related_products`, `compare_products` y las 5 de carrito (§10.9.1); faltan `get_orders`, `get_order` y `start_checkout` (dependen de N6) |
 | N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B | 🟡 casi todo ✅: pipeline de 3 etapas, retry transitorio del LLM (SDK), fallbacks honestos, las 6 stop conditions (incluida confirmación humana), historial y tool results recortados, IDs validados contra tools + DB, tarjetas desde `/api/products?ids=`, ninguna tool compra, quitar/vaciar con confirmación. Falta: retry ante errores transitorios de la DB |
 | N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ✅ tarjetas por ID, tabla comparativa (`comparison_ids` → `/api/products/compare`, en el chat y en `/compare`), aclaraciones, chips, reintentar, confirmación de nivel 3, `refresh_cart`, historial |
 | N12 | Voz (API de OpenAI + botón 🎤) | RF-08 | B + C | ✅ backend (`POST /api/transcribe` con la API de OpenAI, §11) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input) |
-| N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | 🟡 dominio ✅, API ✅, agente con FakeLLM ✅ (306 tests); faltan transacción de compra y concurrencia (N6) |
+| N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | ✅ dominio, API, agente con FakeLLM, transacción de compra y concurrencia (354 tests) |
 | N14 | `AGENTS.md` + 2 skills | §17 | Todos | ✅ `AGENTS.md` + `CLAUDE.md` + 3 skills (`testing`, `mercanova-review`, `add-agent-tool`) + evidencia en `docs/evidence/` |
 
 **Extras (en orden de prioridad; se cortan desde el final):**
