@@ -24,7 +24,7 @@ export function ProductCard({ product }: { product: ProductCardData }) {
         <p className="text-xs font-medium text-primary/80">
           {translateCategory(product.category)} · {translateSubcategory(product.subcategory)}
         </p>
-        <Link to={`/products/${product.product_id}`} className="font-medium leading-snug hover:text-primary">
+        <Link to={`/products/${product.product_id}`} className="text-base leading-snug font-semibold tracking-tight hover:text-primary">
           {product.name}
         </Link>
         <p className="text-xs text-muted-foreground">{product.brand}</p>

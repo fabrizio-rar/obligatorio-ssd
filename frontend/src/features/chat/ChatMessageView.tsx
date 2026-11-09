@@ -46,7 +46,8 @@ export function ChatMessageView({ message, busy, retryText, onRetry, onConfirmat
     )
   }
 
-  const { response, tools, confirmation } = message
+  // The tools the agent used are not shown: they are internal (tool_call_logs, scripts.chat --verbose)
+  const { response, confirmation } = message
   const question = response.clarifying_question
   return (
     <div className="mr-8 flex flex-col gap-2 rounded-2xl rounded-bl-sm bg-secondary px-3 py-2 text-sm">
@@ -57,16 +58,6 @@ export function ChatMessageView({ message, busy, retryText, onRetry, onConfirmat
         <ConfirmationCard pending={response.pending_confirmation} state={confirmation} onResolve={onConfirmation} />
       )}
       {response.type === 'error' && retry}
-      {tools.length > 0 && (
-        <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer select-none">Ver tools usadas ({tools.length})</summary>
-          <ol className="mt-1 list-inside list-decimal font-mono">
-            {tools.map((tool, i) => (
-              <li key={`${tool}-${i}`}>{tool}</li>
-            ))}
-          </ol>
-        </details>
-      )}
     </div>
   )
 }

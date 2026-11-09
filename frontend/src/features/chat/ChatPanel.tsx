@@ -138,7 +138,6 @@ function ChatPanel({
           id: newId(),
           role: 'assistant',
           response,
-          tools: turn.meta.tools_used,
           confirmation: response.pending_confirmation ? 'pending' : null,
         },
       ])

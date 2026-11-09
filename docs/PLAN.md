@@ -396,7 +396,7 @@ Vista `product_availability`: `product_id`, `SUM(available_qty) AS available`, e
 | `conversations` | `id`, `user_id`, `title`, `created_at` | Botón "Nueva conversación". `user_id` nullable solo por las conversaciones previas al login (migración 0004); la API siempre filtra por el usuario del token |
 | `chat_messages` | `id`, `conversation_id`, `role`, `content`, `structured JSONB`, `created_at` | |
 | `agent_state` | `conversation_id PK`, `state JSONB` | §10.5 |
-| `tool_call_logs` | `message_id`, `step`, `tool_name`, `arguments`, `result`, `is_error`, `latency_ms` | Panel "ver tools usadas" y evidencia para el PDF |
+| `tool_call_logs` | `message_id`, `step`, `tool_name`, `arguments`, `result`, `is_error`, `latency_ms` | Depuración (`scripts.chat --verbose`; no se muestran al usuario) y evidencia para el PDF |
 
 **Datos ficticios agregados (para documentar):** solo el usuario `demo`. El dataset ya trae stock, precios e imágenes, así que **no hace falta inventar stock**.
 
@@ -875,7 +875,7 @@ sequenceDiagram
 | POST | `/api/orders/{id}/cancel` | ✔ | |
 | GET | `/api/orders`, `/api/orders/{code}` | ✔ | Historial |
 | GET | `/api/conversations?limit=&offset=` | ✔ | Las conversaciones del usuario, por última actividad, con `message_count` y vista previa del último mensaje. **No hay `POST`:** `POST /api/chat` sin `conversation_id` crea la conversación (botón "Nueva conversación" = mandar `null`) |
-| GET | `/api/conversations/{id}/messages` | ✔ | Rehidratar el chat: mensajes en orden; los del asistente traen `response` (`type`, `product_ids` para las tarjetas, `suggested_replies`) y `tools` (paso, tool, argumentos, error, latencia) para el panel "ver tools usadas". La de otro usuario → 404 |
+| GET | `/api/conversations/{id}/messages` | ✔ | Rehidratar el chat: mensajes en orden; los del asistente traen `response` (`type`, `product_ids` para las tarjetas, `suggested_replies`) y `tools` (paso, tool, argumentos, error, latencia) para depurar; la UI no los muestra. La de otro usuario → 404 |
 | POST | `/api/chat/stream` | ✔ | `{conversation_id, message}` → SSE |
 | POST | `/api/transcribe` | ✔ | Audio multipart (`file`: webm, ogg, mp4/m4a, mp3, wav; ≤ `STT_MAX_BYTES`) → `{text, model}`. **No habla con el agente:** el texto va al input y se manda a `/api/chat`. Errores: 415 `UNSUPPORTED_AUDIO`, 413 `AUDIO_TOO_LARGE`, 422 `AUDIO_TOO_SHORT` / `NO_SPEECH` / `INVALID_AUDIO`, 503 `STT_DISABLED` |
 | GET | `/api/health` | — | `{status, db, chat_enabled, stt_enabled}`: 503 si la DB no responde; `chat_enabled` / `stt_enabled` dicen si hay `OPENAI_API_KEY` |
@@ -951,7 +951,7 @@ Las reglas de asignación (greedy y sucursal única) viven en `domain/inventory.
 | Login / Register | `Card`, `Form`, `Input`, `Button` | Usuario y contraseña con validación |
 | Catálogo | `Card`, `Badge`, `Select`, `Slider` | Grilla, filtros (categoría traducida, precio, marca, en stock), precio con descuento tachado, badge "Sin stock" o "Quedan N" |
 | Detalle | `Tabs`, `Table` | Specs agrupadas, stock por sucursal, alternativas y accesorios |
-| ChatPanel | `ScrollArea`, `Card`, `Badge`, `Button` | Mensajes, **estado en vivo** (eventos SSE), tarjetas inline, **tabla comparativa**, chips, 🎤, reintentar, "ver tools usadas" (`Collapsible`), nueva conversación |
+| ChatPanel | `ScrollArea`, `Card`, `Badge`, `Button` | Mensajes, **estado en vivo** (eventos SSE), tarjetas inline, **tabla comparativa**, chips, 🎤, reintentar, nueva conversación |
 | CartDrawer | `Sheet` | Ítems, +/−, quitar, total, errores de stock inline |
 | Checkout | `Form`, `RadioGroup`, `Select` | Nombre, email, **método de entrega** (`RadioGroup`: "Envío a domicilio" / "Retiro en sucursal"). Con envío: dirección. Con retiro: lista de sucursales con disponibilidad (las que no cubren el carrito aparecen deshabilitadas con lo que falta). Pago simulado → **resumen** → `AlertDialog` de confirmación (ver abajo) |
 | Confirmación | `Card` | Código de orden, detalle, "Envío a…" o "Retirá en MercaNova {sucursal}" |
@@ -976,7 +976,7 @@ Las reglas de asignación (greedy y sucursal única) viven en `domain/inventory.
 - `checkout_prefill` → el checkout abre con el método de entrega, la sucursal o la dirección completos y editables.
 **i18n:** categorías, subcategorías, nombres de atributos y estados de stock traducidos con un diccionario; nombres de producto y valores en su forma original.
 
-**Implementado (08/11)** (detalle en `frontend/README.md`): login/registro, catálogo con chips de categoría y paginación, detalle con tabs y relacionados, drawer del carrito, chat lateral persistente (tarjetas, tabla comparativa, aclaraciones, chips, reintentar, tarjeta de nivel 3, "ver tools usadas", historial), `/compare` y voz 🎤. Diferencias con la tabla de arriba:
+**Implementado (08/11)** (detalle en `frontend/README.md`): login/registro, catálogo con chips de categoría y paginación, detalle con tabs y relacionados, drawer del carrito, chat lateral persistente (tarjetas, tabla comparativa, aclaraciones, chips, reintentar, tarjeta de nivel 3, historial), `/compare` y voz 🎤. Diferencias con la tabla de arriba:
 - **Sin buscador de texto:** la búsqueda en lenguaje natural es solo por chat (§0, §9.5). Los filtros del catálogo (chips de categoría + barra con marca, precio desde/hasta y "Solo con stock") viven en la URL y vuelven a la página 1 al cambiar; cambiar de categoría descarta la marca. "Ordenar por" (categoría, nombre A - Z / Z - A, precio menor a mayor / mayor a menor) también va en la URL y no se borra con "Limpiar filtros".
 - Sin estado en vivo (SSE, E2): spinner mientras corre el turno.
 - Falta: Checkout, Confirmación y Mis órdenes (N6–N7; el botón "Continuar al checkout" está deshabilitado), toast de Deshacer (E3) y `checkout_prefill` (E4).
@@ -1249,7 +1249,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N8 | Búsqueda: filtros SQL + **vectorial** (embeddings multilingües) | RF-02 | B | ✅ `retrieval/search.py` (la tool la conecta N9) |
 | N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | 🟡 loop + `POST /api/chat` + 9 tools: `search_products`, `get_product`, `get_related_products`, `compare_products` y las 5 de carrito (§10.9.1); faltan `get_orders`, `get_order` y `start_checkout` (dependen de N6) |
 | N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B | 🟡 casi todo ✅: pipeline de 3 etapas, retry transitorio del LLM (SDK), fallbacks honestos, las 6 stop conditions (incluida confirmación humana), historial y tool results recortados, IDs validados contra tools + DB, tarjetas desde `/api/products?ids=`, ninguna tool compra, quitar/vaciar con confirmación. Falta: retry ante errores transitorios de la DB |
-| N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ✅ tarjetas por ID, tabla comparativa (`comparison_ids` → `/api/products/compare`, en el chat y en `/compare`), aclaraciones, chips, reintentar, confirmación de nivel 3, `refresh_cart`, "ver tools usadas", historial |
+| N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ✅ tarjetas por ID, tabla comparativa (`comparison_ids` → `/api/products/compare`, en el chat y en `/compare`), aclaraciones, chips, reintentar, confirmación de nivel 3, `refresh_cart`, historial |
 | N12 | Voz (API de OpenAI + botón 🎤) | RF-08 | B + C | ✅ backend (`POST /api/transcribe` con la API de OpenAI, §11) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input) |
 | N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | 🟡 dominio ✅, API ✅, agente con FakeLLM ✅ (306 tests); faltan transacción de compra y concurrencia (N6) |
 | N14 | `AGENTS.md` + 2 skills | §17 | Todos | ✅ `AGENTS.md` + `CLAUDE.md` + 3 skills (`testing`, `mercanova-review`, `add-agent-tool`) + evidencia en `docs/evidence/` |

@@ -62,7 +62,8 @@ export function ComparisonTable({
             {comparison.products.map((p) => (
               <TableHead
                 key={p.product_id}
-                className={cn('h-auto py-2 align-bottom', compact ? 'min-w-24' : 'min-w-40')}
+                // Top-aligned: the images line up even when one name takes two lines
+                className={cn('h-auto py-3 align-top', compact ? 'min-w-24' : 'min-w-40')}
               >
                 <Link to={`/products/${p.product_id}`} className="mb-1.5 block">
                   <ProductImage
@@ -74,7 +75,7 @@ export function ComparisonTable({
                 </Link>
                 <Link
                   to={`/products/${p.product_id}`}
-                  className="block whitespace-normal font-medium text-foreground hover:underline"
+                  className="block whitespace-normal font-semibold text-foreground hover:text-primary"
                 >
                   {p.name}
                 </Link>
@@ -86,12 +87,15 @@ export function ComparisonTable({
         <TableBody>
           {[...groups].map(([group, groupRows]) => (
             <Fragment key={group}>
-              <TableRow className="hover:bg-transparent">
+              <TableRow className="border-t-2 border-primary/20 hover:bg-transparent">
                 <TableCell
                   colSpan={comparison.products.length + 1}
-                  className="bg-muted/50 py-1 text-xs font-medium text-muted-foreground uppercase"
+                  className="bg-accent py-2 text-xs font-semibold tracking-wide text-accent-foreground uppercase"
                 >
-                  {translateSpecGroup(group)}
+                  <span className="flex items-center gap-2">
+                    <span className="h-3.5 w-1 rounded-full bg-primary" aria-hidden="true" />
+                    {translateSpecGroup(group)}
+                  </span>
                 </TableCell>
               </TableRow>
               {groupRows.map((row) => (

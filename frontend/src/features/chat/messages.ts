@@ -13,7 +13,6 @@ export type ChatMessage =
       id: string
       role: 'assistant'
       response: AgentResponse
-      tools: string[]
       confirmation: ConfirmationState | null
     }
   | { id: string; role: 'error'; text: string; retryText: string | null }
@@ -42,7 +41,6 @@ export function fromHistory(conversation: ConversationMessages): ChatMessage[] {
       id,
       role: 'assistant',
       response,
-      tools: m.tools.map((t) => t.tool_name),
       confirmation: response.pending_confirmation ? 'stale' : null,
     }
   })
