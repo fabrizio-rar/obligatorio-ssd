@@ -38,9 +38,10 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      # hot reload: edit src/ on the host; node_modules stays inside the container
+      # hot reload: edit src/, index.html and public/ on the host; node_modules stays inside the container
       - ./frontend/src:/app/src
       - ./frontend/index.html:/app/index.html
+      - ./frontend/public:/app/public
 
 volumes:
   pgdata: {}

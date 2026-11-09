@@ -23,7 +23,10 @@ import { fromHistory, type ChatMessage, type ConfirmationState } from './message
 export function ChatSidebar({ minimized, onMinimize }: { minimized: boolean; onMinimize: () => void }) {
   const session = useSession()
   const location = useLocation()
-  if (session) return <ChatPanel key={session.username} minimized={minimized} onMinimize={onMinimize} />
+  if (session)
+    return (
+      <ChatPanel key={session.username} username={session.username} minimized={minimized} onMinimize={onMinimize} />
+    )
   return (
     <div className="relative flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
       <div className="absolute top-3 right-3">
@@ -68,7 +71,28 @@ function TypingIndicator() {
   )
 }
 
-function ChatPanel({ minimized, onMinimize }: { minimized: boolean; onMinimize: () => void }) {
+/** The assistant's opening message. Fixed text drawn by the UI (it does not call the model), so
+ * it is instant and costs nothing; it is not saved in the conversation. */
+function Greeting({ username }: { username: string }) {
+  return (
+    <div className="mr-8 flex flex-col gap-1 rounded-2xl rounded-bl-sm bg-secondary px-3 py-2 text-sm">
+      <p>
+        ¡Hola, <span className="font-medium">{username}</span>! 👋 Soy el asistente de MercaNova.
+      </p>
+      <p>¿En qué te puedo ayudar hoy?</p>
+    </div>
+  )
+}
+
+function ChatPanel({
+  username,
+  minimized,
+  onMinimize,
+}: {
+  username: string
+  minimized: boolean
+  onMinimize: () => void
+}) {
   const queryClient = useQueryClient()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [conversationId, setConversationId] = useState<string | null>(null)
@@ -274,12 +298,7 @@ function ChatPanel({ minimized, onMinimize }: { minimized: boolean; onMinimize: 
         <>
           <ScrollArea className="min-h-0 flex-1 px-4">
             <div className="flex flex-col gap-3 py-4">
-              {messages.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  Contame qué necesitás. Por ejemplo: “Necesito unos auriculares cómodos para videollamadas, hasta
-                  USD 200”.
-                </p>
-              )}
+              <Greeting username={username} />
               {messages.map((m, i) => (
                 <ChatMessageView
                   key={m.id}
