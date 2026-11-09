@@ -23,7 +23,9 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [x] Chat en el frontend (N11): tarjetas por ID (`/products?ids=`), tabla comparativa (`comparison_ids` → `/api/products/compare`, compacta en el chat y completa en `/compare`), aclaraciones, chips, reintentar, tarjeta de confirmación de nivel 3, "ver tools usadas" e historial de conversaciones
 - [x] `AGENTS.md` + skills (N14): `testing`, `mercanova-review`, `add-agent-tool`
 - [x] Voz (N12): backend (`POST /api/transcribe`) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input)
-- [ ] Resto del núcleo (N6, N7, N10, N13): ver `docs/PLAN.md` §20.1
+- [~] Tests (N13): 281 de backend (`pytest`, sin OpenAI). Faltan la transacción de compra y la concurrencia (llegan con N6)
+- [~] Robustez del agente (N10): todo salvo el retry ante errores transitorios de la DB
+- [ ] Checkout (N6) y órdenes (N7), backend + UI: ver `docs/PLAN.md` §12.1, §12.2 y §20.1
 
 > Cuando se complete un ítem del núcleo, actualizá esta checklist **y** la columna "Estado" de `docs/PLAN.md` §20.1 en el mismo cambio.
 
@@ -62,9 +64,9 @@ backend/app/
   agent/               # llm/, tools.py, prompts/, response_schema.py, state.py, guardrails.py, loop.py
   stt/                 # transcriber
   models/  schemas/    # SQLAlchemy / Pydantic
-backend/scripts/       # ingest.py, run_evals.py
+backend/scripts/       # ingest, index_embeddings, search, chat, seed_demo_user (+ run_evals.py con E1)
 backend/tests/         # unit/, integration/, agent/, evals/
-frontend/src/          # components/ui (shadcn), api/, pages/, features/, i18n/
+frontend/src/          # api/, components/ui (shadcn), features/ (auth, catalog, cart, chat, compare, voice), lib/ (sesión, formato, i18n)
 docs/                  # PLAN.md, diagramas, capturas, informe
 ```
 
@@ -109,7 +111,7 @@ docker compose exec backend python -m scripts.seed_demo_user   # crea demo/demo1
 docker compose exec backend pytest                 # tests (sin evals); los de integración usan TEST_DATABASE_URL
 docker compose exec backend ruff check . && docker compose exec backend ruff format --check .
 docker compose exec frontend sh -c 'npx tsc -b && npx oxlint'   # frontend: tipos (TS strict) + lint; http://localhost:5173 (hot reload sobre src/)
-docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-luna (gasta créditos: correr a mano)
+# Todavía no existe (E1): docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-luna (gasta créditos)
 ```
 
 ---

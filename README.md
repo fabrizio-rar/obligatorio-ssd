@@ -4,7 +4,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 
 Obligatorio 2 de **Sistemas de Soporte de Decisión** (ORT, 2026).
 
-> **Estado (08/11/2026):** backend del núcleo funcionando (catálogo, auth, carrito, búsqueda RAG y agente con 9 tools). Frontend en http://localhost:5173 con login, catálogo, detalle, carrito y chat (tarjetas, comparación, confirmaciones, historial y voz 🎤). Faltan el checkout y las órdenes. Detalle en [`docs/PLAN.md` §0.1](docs/PLAN.md#01-estado-de-la-implementación-backend-0811).
+> **Estado (08/11/2026):** backend del núcleo funcionando (catálogo, auth, carrito, búsqueda RAG y agente con 9 tools). Frontend en http://localhost:5173 con login, catálogo, detalle, carrito y chat (tarjetas, comparación, confirmaciones, historial y voz 🎤). Faltan el checkout y las órdenes. Detalle en [`docs/PLAN.md` §0.1](docs/PLAN.md#01-estado-de-la-implementación-0811).
 
 ---
 
@@ -39,7 +39,7 @@ Para verificar que levantó:
 
 ```bash
 curl localhost:8000/api/health
-# {"status":"ok","db":"ok","chat_enabled":true}
+# {"status":"ok","db":"ok","chat_enabled":true,"stt_enabled":true}
 ```
 
 La documentación interactiva de la API (Swagger) está en **http://localhost:8000/docs**.
@@ -154,9 +154,10 @@ Están todas en [`.env.example`](.env.example), con un comentario cada una. Las 
 
 | Variable | Para qué |
 |---|---|
-| `OPENAI_API_KEY` | Chat y embeddings. **Nunca la commitees.** |
+| `OPENAI_API_KEY` | Chat, embeddings y voz. **Nunca la commitees.** |
 | `LLM_MODEL`, `LLM_REASONING_EFFORT` | Modelo del agente (`gpt-6-luna`, `low`) |
 | `EMBEDDING_MODEL`, `EMBEDDING_DIM` | `text-embedding-3-small`, 1536 dimensiones (tiene que coincidir con la migración) |
+| `STT_MODEL`, `STT_MAX_BYTES` | Voz: `gpt-4o-transcribe`, audio de hasta 2 MB |
 | `AGENT_MAX_STEPS`, `AGENT_TURN_TIMEOUT_SECONDS`, `AGENT_MAX_TOKENS_PER_TURN` | Límites de cada turno del agente |
 | `POSTGRES_*`, `DATABASE_URL`, `TEST_DATABASE_URL` | Base de datos |
 | `SEED_DEMO_USER`, `AUTH_TOKEN_TTL_HOURS` | Usuario demo y duración de la sesión |
@@ -173,14 +174,16 @@ backend/
     domain/       # lógica de negocio pura: catálogo, carrito, comparación, inventario, errores
     retrieval/    # documentos, embeddings, indexado, búsqueda híbrida, vocabulario (JSON)
     agent/        # loop, tools, prompt, guardrails, estado, adaptador de OpenAI (llm/)
+    stt/          # transcripción de voz (OpenAI) para /api/transcribe
     ingest/       # Excel -> validación -> Postgres
     models/       # SQLAlchemy
   alembic/        # migraciones
   scripts/        # ingest, index_embeddings, search, chat, seed_demo_user
   tests/          # unit/ e integration/ (Postgres real, FakeLLM)
-frontend/src/
+frontend/src/         # detalle y estado en frontend/README.md
   api/            # cliente HTTP (token), tipos espejo del backend, endpoints
-  features/       # auth, catalog, cart, chat, compare (una carpeta por funcionalidad)
+  features/       # auth, catalog, cart, chat, compare, voice (una carpeta por funcionalidad)
+  lib/            # sesión (token), formato de precios, diccionario i18n
   components/ui/  # componentes de shadcn (generados)
 data/raw/         # dataset de la cátedra (Excel)
 docs/             # PLAN.md (diseño y estado) y plans/
@@ -198,6 +201,8 @@ docs/             # PLAN.md (diseño y estado) y plans/
 |---|---|
 | `port is already allocated` (5433 u 8000) | Otro proceso usa el puerto. Cambiá `POSTGRES_HOST_PORT` en `.env` o liberá el 8000 |
 | El chat responde `503 CHAT_DISABLED` | Falta `OPENAI_API_KEY` en `.env`. Después de agregarla: `docker compose up -d --force-recreate backend` |
+| El botón 🎤 está deshabilitado o `/api/transcribe` da `503 STT_DISABLED` | Igual que el chat: falta `OPENAI_API_KEY`. Si el backend no arranca, revisá que `.env` tenga `STT_PROVIDER=openai` (copiá las líneas `STT_*` de `.env.example`) |
 | El chat responde `502` | La key es inválida o no tiene acceso al modelo. Revisá los logs: `docker compose logs backend` |
 | El backend se reinicia o sale con error | `docker compose logs backend`. Revisá que exista `data/raw/MercaNova_dataset_obligatorio_2.xlsx` |
+| La app en `:5173` no carga o dice que el backend no responde | `docker compose logs frontend backend`. El frontend necesita el backend arriba (Vite le reenvía `/api`) |
 | Quiero empezar de cero | `docker compose down -v && docker compose up --build` |

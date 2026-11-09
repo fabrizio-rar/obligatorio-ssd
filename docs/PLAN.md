@@ -6,7 +6,7 @@
 > **v3:** el LLM es **OpenAI `gpt-6-luna`** por API (Responses API). Ollama sale del stack. Embeddings y voz siguen locales.
 > **v4 (08/11):** los embeddings pasan a la **API de OpenAI** (`text-embedding-3-small`, 1536 dims) en lugar de `fastembed` local (§9.3).
 > **v5 (08/11):** la voz también pasa a la **API de OpenAI** (`gpt-4o-transcribe`) en lugar de faster-whisper local (§11).
-> **Estado (08/11):** backend del núcleo implementado salvo checkout/órdenes (N6–N7). Resumen en [0.1 Estado de la implementación](#01-estado-de-la-implementación-backend-0811). Cómo levantarlo: `README.md`.
+> **Estado (08/11):** backend y frontend del núcleo implementados salvo checkout y órdenes (N6–N7). Resumen en [0.1 Estado de la implementación](#01-estado-de-la-implementación-0811). Cómo levantarlo: `README.md`.
 
 ---
 
@@ -33,11 +33,11 @@
 | Coding agent | `AGENTS.md`, `CLAUDE.md` → `@AGENTS.md`, y ≥2 skills en `.claude/skills/` |
 | **Priorización** | **Núcleo (N1–N14) listo para el 23/11**; después los extras (E1–E8) en orden. Semana 5 solo documentación y video (§20.1) |
 
-### 0.1 Estado de la implementación: backend (08/11)
+### 0.1 Estado de la implementación (08/11)
 
 | Área | Estado | Dónde |
 |---|---|---|
-| Docker + config | ✅ `db` + `backend`; migraciones, ingesta, usuario demo y embeddings automáticos al arrancar | `docker-compose.yml`, `backend/entrypoint.sh`, `.env.example` |
+| Docker + config | ✅ `db` + `backend` + `frontend` (Vite en `:5173`, proxy `/api` → backend); migraciones, ingesta, usuario demo y embeddings automáticos al arrancar | `docker-compose.yml`, `backend/entrypoint.sh`, `.env.example` |
 | Ingesta del Excel | ✅ 8 hojas, validación, reporte (0 rechazadas, 17 inactivos, 22 sin stock, 3 nombres duplicados, 37 specs N/D) | `app/ingest/`, `scripts/ingest.py` |
 | Embeddings + búsqueda | ✅ 360 vectores (`text-embedding-3-small`) + `search()` (filtros SQL + vector + usos, RRF) | `app/retrieval/` |
 | Auth | ✅ register / login / logout / me, bcrypt, token con hash, `demo` / `demo1234` | `app/auth/`, `/api/auth/*` |
@@ -47,7 +47,7 @@
 | Checkout + órdenes | ⬜ N6–N7 (§12.1, §12.2), y las tools `get_orders`, `get_order`, `start_checkout` | — |
 | Voz | ✅ `POST /api/transcribe` (API de OpenAI, ~1 s por mensaje) + botón 🎤 en la UI | `app/stt/`, `app/api/transcribe.py` |
 | Frontend | ✅ N1 (parte FE), N3, N4, N5, N11 y N12 (UI); ⬜ N6 y N7 (esperan sus endpoints) | `frontend/src/` (estado en `frontend/README.md`) |
-| Tests | ✅ 260 tests (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM`. Faltan los de la transacción de compra y concurrencia (N6) | `backend/tests/` |
+| Tests | ✅ 281 tests de backend (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM` + voz con `FakeTranscriber`. Faltan los de la transacción de compra y concurrencia (N6). Frontend: TS `strict` + oxlint, sin tests (§16) | `backend/tests/` |
 | Skills del coding agent | ✅ `testing`, `mercanova-review`, `add-agent-tool` | `.claude/skills/` |
 
 ---
@@ -118,7 +118,7 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 ## 3. Requerimientos y cómo los cubrimos
 
 ### Funcionales
-| ID | Requerimiento | Cómo lo resolvemos | Componente | Estado (backend, 08/11) |
+| ID | Requerimiento | Cómo lo resolvemos | Componente | Estado (08/11) |
 |---|---|---|---|---|
 | RF-01 | Catálogo | `GET /products` paginado (solo activos, `?category=`; la búsqueda es por chat) y detalle con specs, stock por sucursal y relacionados | API + FE | ✅ API + UI |
 | RF-02 | Búsqueda en lenguaje natural | Búsqueda híbrida (§9) **solo por chat**: el agente traduce y arma los filtros para la tool `search_products` | retrieval | ✅ (por chat) |
@@ -145,7 +145,7 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 | RNF-01/02/07 | `docker compose up --build` desde un clone limpio, con migraciones e ingesta automáticas al primer arranque | ✅ backend + db + frontend (`:5173`) |
 | RNF-03 | Todo por variables de entorno, con `.env.example` versionado. Ni keys ni modelos hardcodeados | ✅ |
 | RNF-04 | Transacciones, errores tipados, UI con reintentar; la app sigue funcionando si el LLM falla | ✅ backend: errores tipados uniformes, transacciones, sin key levanta igual (chat 503) |
-| RNF-05 | §16 | 🟡 260 tests; faltan los de la compra |
+| RNF-05 | §16 | 🟡 281 tests; faltan los de la compra |
 | RNF-06 | Capas separadas, ruff + eslint, TS estricto | ✅ backend (ruff) + frontend (TS `strict` + oxlint en lugar de eslint) |
 
 ---
@@ -174,8 +174,8 @@ mercanova/
 ├── CLAUDE.md                       # "@AGENTS.md"
 ├── .claude/skills/
 │   ├── testing/SKILL.md
-│   ├── code-review/SKILL.md
-│   └── add-agent-tool/SKILL.md     # 🟡 opcional
+│   ├── mercanova-review/SKILL.md   # el code-review (§17)
+│   └── add-agent-tool/SKILL.md
 ├── README.md
 ├── docker-compose.yml
 ├── .env.example
@@ -226,14 +226,15 @@ mercanova/
 │   └── src/
 │       ├── components/ui/          # shadcn
 │       ├── api/                    # cliente tipado + SSE
-│       ├── i18n/categories.ts      # traducción de categorías y atributos a español
-│       ├── pages/                  # Login, Register, Catalog, ProductDetail, Checkout, Confirmation, Orders
-│       └── features/               # chat/, cart/, products/
+│       ├── lib/format.ts           # precios + diccionario i18n (categorías, stock, usos, grupos de specs)
+│       └── features/               # auth/, catalog/, cart/, chat/, compare/, voice/ (una carpeta por funcionalidad, con sus páginas)
 └── docs/
     ├── diagrams/
     ├── screenshots/
     └── informe/
 ```
+
+> Estructura real al 08/11: [`README.md`](../README.md#estructura) y [`frontend/README.md`](../frontend/README.md). Todavía no existen `domain/checkout.py`, `api/checkout|orders`, `agent/events.py` (SSE, E2), `scripts/run_evals.py` ni `tests/evals/` (E1).
 
 **Regla de capas:** `api/` y `agent/tools.py` llaman a `domain/`, y `domain/` no importa nada de `agent/`. Un botón de la UI y una tool ejecutan la **misma** función.
 
@@ -246,12 +247,12 @@ mercanova/
 |---|---|---|---|
 | `db` | `pgvector/pgvector:pg16` | 5432 (en el host: `127.0.0.1:5433`, configurable con `POSTGRES_HOST_PORT`) | Datos y vectores |
 | `backend` | build `./backend` | 8000 | API, auth, agente, embeddings y voz (llaman a la API de OpenAI), ingesta |
-| `frontend` | build `./frontend` (build de Vite servido con nginx) | 5173 → 80 | SPA |
+| `frontend` | build `./frontend` (**dev server de Vite**, hot reload sobre `src/`) | 5173 | SPA; Vite reenvía `/api` al backend (sin CORS) |
 
 Son tres servicios. El LLM, los embeddings y la voz son externos (API de OpenAI).
 
-> ⚠️ **Requiere `OPENAI_API_KEY`** en `.env` para el chat. Sin key, la app levanta igual: catálogo, carrito, checkout, órdenes y voz funcionan, y el chat muestra "Asistente no disponible: falta configurar OPENAI_API_KEY". Los tests no necesitan key (usan `FakeLLM`).
-> ⚠️ **nginx y SSE:** desactivar el buffering (`proxy_buffering off`) en la ruta `/api/chat/stream`, o servir la API directo en `:8000` (más simple).
+> ⚠️ **Requiere `OPENAI_API_KEY`** en `.env` para el chat. Sin key, la app levanta igual: catálogo, carrito, checkout y órdenes funcionan; la voz se deshabilita (`STT_DISABLED`) y el chat muestra "Asistente no disponible: falta configurar OPENAI_API_KEY". Los tests no necesitan key (usan `FakeLLM`).
+> ⚠️ **SSE (E2):** el proxy de Vite pasa los eventos sin buffering. Si algún día se sirve un build con nginx, desactivar `proxy_buffering` en `/api/chat/stream`.
 
 ### 6.2 `docker-compose.yml` (borrador)
 ```yaml
@@ -580,7 +581,7 @@ flowchart LR
     AUTH[Auth]
     API[REST]
     SSE[/chat/stream SSE/]
-    STT[faster-whisper]
+    STT[Transcriber → OpenAI]
     AG[Agent loop]
     TOOLS[Tools]
     DOM[Dominio]
@@ -875,7 +876,7 @@ sequenceDiagram
 
 `Authorization: Bearer <token>`. El catálogo es público; carrito, órdenes y chat requieren login.
 **Errores:** todo `DomainError` sale con `{"ok": false, "error": {code, message, details}}` desde un único handler (`api/errors.py`): 401 `UNAUTHORIZED` / `INVALID_CREDENTIALS` (mismo mensaje para usuario inexistente y contraseña mal), 404 `NOT_FOUND` / `CONVERSATION_NOT_FOUND` (la conversación de otro usuario también da 404), 409 `USERNAME_TAKEN`, 422 `INVALID_INPUT`.
-**Implementado (08/11):** historial de conversaciones (`agent/conversations.py` + `/api/conversations*`), carrito (`domain/cart.py` + `/api/cart*`), auth (`register`, `login`, `logout`, `me`), catálogo (`/products`, `/products/{id}`, `/products?ids=`, `/categories`, `/warehouses`) y `POST /api/chat` con login. Usuario `demo` / `demo1234` creado en el arranque (`scripts.seed_demo_user`).
+**Implementado (08/11):** historial de conversaciones (`agent/conversations.py` + `/api/conversations*`), carrito (`domain/cart.py` + `/api/cart*`), auth (`register`, `login`, `logout`, `me`), catálogo (`/products`, `/products/{id}`, `/products?ids=`, `/categories`, `/warehouses`), comparación (`/products/compare`), voz (`/transcribe`), `/health` con `chat_enabled` / `stt_enabled` y `POST /api/chat` con login. Falta: checkout, órdenes, `undo` (E3) y `/chat/stream` (E2). Usuario `demo` / `demo1234` creado en el arranque (`scripts.seed_demo_user`).
 
 ### 12.1 Transacción de confirmación
 ```sql
@@ -968,6 +969,12 @@ Las reglas de asignación (greedy y sucursal única) viven en `domain/inventory.
 - `pending_confirmation` → tarjeta en el chat con [Confirmar] / [Cancelar], que llama directo a la API REST.
 - `checkout_prefill` → el checkout abre con el método de entrega, la sucursal o la dirección completos y editables.
 **i18n:** categorías, subcategorías, nombres de atributos y estados de stock traducidos con un diccionario; nombres de producto y valores en su forma original.
+
+**Implementado (08/11)** (detalle en `frontend/README.md`): login/registro, catálogo con chips de categoría y paginación, detalle con tabs y relacionados, drawer del carrito, chat lateral persistente (tarjetas, tabla comparativa, aclaraciones, chips, reintentar, tarjeta de nivel 3, "ver tools usadas", historial), `/compare` y voz 🎤. Diferencias con la tabla de arriba:
+- **Sin buscador ni filtros de precio/marca/stock en el catálogo:** la búsqueda es solo por chat (§0, §9.5) y `GET /api/products` filtra solo por categoría.
+- Sin estado en vivo (SSE, E2): spinner mientras corre el turno.
+- Falta: Checkout, Confirmación y Mis órdenes (N6–N7; el botón "Continuar al checkout" está deshabilitado), toast de Deshacer (E3) y `checkout_prefill` (E4).
+- Los nombres de atributos de specs todavía no se traducen (solo los grupos).
 
 ---
 
@@ -1088,7 +1095,7 @@ La letra pide *"una estrategia de testing adecuada a la arquitectura elegida y c
 | API | Endpoints felices y de error (401, 404, 409, 422); aislamiento entre usuarios | pytest + `TestClient` | No |
 | Tools | Validación de argumentos, errores uniformes, `user_id` inyectado, **las tools de nivel 3 no modifican la DB**, `undo_token` restaura el estado anterior, `start_checkout` valida el prefill | pytest | No |
 | Agente | **FakeLLM** guionado: **orden del pipeline** (un argumento inválido no llega al dominio), **cada stop condition** (objetivo, max pasos, presupuesto, loop, error, confirmación humana), retry solo ante errores transitorios, retry de formato, fallback, recorte del contexto, eventos SSE en orden | pytest | Mock |
-| STT | `.wav` fijo con el modelo `tiny` (marcado `slow`) | pytest | No |
+| STT | `POST /api/transcribe` con `FakeTranscriber`: formatos, tamaño, mínimo, `NO_SPEECH`, sin login; vocabulario del `prompt` | pytest | No |
 | **Evals** | 25–30 conversaciones contra el modelo real | `run_evals.py` + `cases.yaml` | **Sí** |
 
 **Casos de eval basados en el dataset:**
@@ -1131,6 +1138,8 @@ La letra pide *"una estrategia de testing adecuada a la arquitectura elegida y c
 **Reporte:** % de casos que pasan por categoría, latencia por turno, tools por turno, **tokens y costo en USD por corrida**. Va al PDF y respalda la elección de `gpt-6-luna` y del `reasoning effort` (`low` vs `medium`).
 **Costo:** cada corrida completa de evals cuesta centavos con `gpt-6-luna`; se corren a mano, nunca en CI.
 🟡 CI opcional: GitHub Actions con `ruff` + `pytest` (sin evals).
+
+**Implementado (08/11):** 281 tests (`tests/unit/` + `tests/integration/`, Postgres real `mercanova_test`): ingesta, retrieval, búsqueda, auth, catálogo, carrito, comparación y relacionados, historial, voz, schema estricto de las tools y el agente con `FakeLLM` (pipeline, stop conditions, nivel 3 sin ejecutar, IDs validados). Faltan: transacción de compra, concurrencia y `PRICE_CHANGED` (N6), y las evals (E1). El frontend no tiene tests (no se piden E2E).
 
 ---
 
@@ -1181,7 +1190,7 @@ Formato: **Problema → Alternativas → Decisión → Justificación → Trade-
 10. Structured output + render desde la DB + guardrails
 11. Streaming de eventos de progreso vs streaming de tokens
 12. LLM: OpenAI `gpt-6-luna` por API vs modelo local (§10.0) → respaldado por la tabla de evals
-13. faster-whisper local
+13. Voz por API de OpenAI (`gpt-4o-transcribe`) vs faster-whisper local (§11)
 14. Login simple con token opaco vs JWT
 15. Sin reserva de stock en el carrito; validación al confirmar
 16. Testing sin E2E: pirámide + evals
@@ -1235,8 +1244,8 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N9 | Agente: loop + tools principales (`search_products`, `get_product`, `compare_products`, `get_related_products`, carrito, `get_orders`, `start_checkout` sin prefill) + structured output | RF-03..07 | B | 🟡 loop + `POST /api/chat` + 9 tools: `search_products`, `get_product`, `get_related_products`, `compare_products` y las 5 de carrito (§10.9.1); faltan `get_orders`, `get_order` y `start_checkout` (dependen de N6) |
 | N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B | 🟡 casi todo ✅: pipeline de 3 etapas, retry transitorio del LLM (SDK), fallbacks honestos, las 6 stop conditions (incluida confirmación humana), historial y tool results recortados, IDs validados contra tools + DB, tarjetas desde `/api/products?ids=`, ninguna tool compra, quitar/vaciar con confirmación. Falta: retry ante errores transitorios de la DB |
 | N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ✅ tarjetas por ID, tabla comparativa (`comparison_ids` → `/api/products/compare`, en el chat y en `/compare`), aclaraciones, chips, reintentar, confirmación de nivel 3, `refresh_cart`, "ver tools usadas", historial |
-| N12 | Voz (faster-whisper + botón 🎤) | RF-08 | B + C | ✅ backend (`POST /api/transcribe` con la API de OpenAI, §11) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input) |
-| N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | 🟡 dominio ✅, API ✅, agente con FakeLLM ✅ (260 tests); faltan transacción de compra y concurrencia (N6) |
+| N12 | Voz (API de OpenAI + botón 🎤) | RF-08 | B + C | ✅ backend (`POST /api/transcribe` con la API de OpenAI, §11) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input) |
+| N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | 🟡 dominio ✅, API ✅, agente con FakeLLM ✅ (281 tests); faltan transacción de compra y concurrencia (N6) |
 | N14 | `AGENTS.md` + 2 skills | §17 | Todos | ✅ `AGENTS.md` + `CLAUDE.md` + 3 skills (`testing`, `mercanova-review`, `add-agent-tool`) + evidencia en `docs/evidence/` |
 
 **Extras (en orden de prioridad; se cortan desde el final):**
@@ -1276,7 +1285,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 8. ¿Cómo prueba el docente el chat? ¿Usa su propia key, o le pasamos una key con límite de gasto **por fuera del repo**? (Nunca en el PDF ni en el código.)
 
 **Ya decidido:**
-- **LLM: OpenAI `gpt-6-luna`** por Responses API (§10.0). Embeddings por API de OpenAI (`text-embedding-3-small`, §9.3). Voz local. Sin Ollama.
+- **LLM: OpenAI `gpt-6-luna`** por Responses API (§10.0). Embeddings por API de OpenAI (`text-embedding-3-small`, §9.3). Voz por API de OpenAI (`gpt-4o-transcribe`, §11). Sin Ollama.
 - Envío a domicilio **y** retiro en sucursal (§12.2), con `order_item_allocations`.
 - Niveles de control de acciones con Deshacer y confirmación para quitar o vaciar (§10.4.1).
 - Checkout precargado desde el chat (§10.4.1). Prioridad: semana 4.
