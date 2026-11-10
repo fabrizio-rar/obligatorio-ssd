@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.agent.llm.base import ToolCall, ToolSpec
 from app.agent.llm.schema import strict_json_schema
 from app.agent.response_schema import PendingAction, UiAction
+from app.config import get_settings
 from app.domain import cart
 from app.domain.cart import CartView
 from app.domain.catalog import (
@@ -29,6 +30,17 @@ from app.domain.catalog import (
     find_products_by_name,
     get_product_detail,
     get_related,
+    list_warehouses,
+    product_cards,
+)
+from app.domain.checkout import (
+    CheckoutHandoff,
+    DeliveryMethod,
+    OrderView,
+    ShippingPolicy,
+    get_order,
+    list_orders,
+    prepare_checkout,
 )
 from app.domain.comparison import MAX_PRODUCTS, MIN_PRODUCTS, compare
 from app.domain.errors import DomainError
@@ -68,6 +80,7 @@ class ToolExecution:
     ui_actions: list[UiAction] = field(default_factory=list)
     pending_confirmation: PendingAction | None = None  # set -> the turn stops here
     comparison_ids: list[str] = field(default_factory=list)
+    checkout: CheckoutHandoff | None = None
 
 
 @dataclass(frozen=True)
@@ -81,6 +94,7 @@ class ToolOutcome:
     ui_actions: list[UiAction] = field(default_factory=list)
     pending_confirmation: PendingAction | None = None
     comparison_ids: list[str] = field(default_factory=list)
+    checkout: CheckoutHandoff | None = None
 
 
 # --- search_products ------------------------------------------------------------------------
@@ -474,6 +488,150 @@ def _compare_products(ctx: ToolContext, args: CompareArgs) -> ToolOutcome:
     return ToolOutcome(data, ids, comparison_ids=ids)
 
 
+# --- Orders and checkout (docs/PLAN.md §10.4): read, and hand off to the checkout ------------
+# None of these buys. The purchase is ONLY the checkout's button (AGENTS.md rule 2).
+
+
+class GetOrdersArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int | None = Field(description="1-10, null = 5. The newest first.")
+
+
+GET_ORDERS_DESCRIPTION = (
+    "The user's purchases (confirmed orders), newest first: code, date, products, delivery and "
+    "total. Use it for 'what did I buy?', 'my orders', 'my last purchase'. For the detail of "
+    "one order, call get_order with its code."
+)
+
+
+def _get_orders(ctx: ToolContext, args: GetOrdersArgs) -> ToolOutcome:
+    limit = args.limit or 5
+    if not 1 <= limit <= 10:
+        raise DomainError("INVALID_ARGUMENTS", "limit must be between 1 and 10")
+    orders = list_orders(ctx.session, ctx.user_id, limit=limit)
+    data = {
+        "ok": True,
+        "total_orders": orders.total,
+        "orders": [
+            {
+                "code": o.code,
+                "date": (o.confirmed_at or o.created_at).date().isoformat(),
+                "products": o.product_names,
+                "units": o.item_count,
+                "delivery": "home delivery"
+                if o.delivery_method == DeliveryMethod.SHIPPING
+                else "pickup",
+                "total": _money(o.total),
+            }
+            for o in orders.items
+        ],
+    }
+    return ToolOutcome(data)
+
+
+class GetOrderArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_code: str = Field(
+        description="Order code as the user wrote it or from get_orders, e.g. MN-ORD-000123."
+    )
+
+
+GET_ORDER_DESCRIPTION = (
+    "Detail of ONE of the user's orders: status, date, products with quantity and the price "
+    "paid, the warehouse each unit came from, delivery, payment and total."
+)
+
+
+def _order_for_model(order: OrderView) -> dict[str, Any]:
+    if order.pickup_warehouse:
+        delivery = f"pickup at {order.pickup_warehouse.name}"
+    elif order.shipping_address:
+        delivery = (
+            f"home delivery to {order.shipping_address.city}, {order.shipping_address.department}"
+        )
+    else:
+        delivery = "home delivery"
+    return {
+        "code": order.code,
+        "status": order.status.value,
+        "date": (order.confirmed_at or order.created_at).date().isoformat(),
+        "delivery": delivery,
+        "payment": order.payment_method.value,
+        "items": [
+            {
+                "product_id": i.product_id,
+                "name": i.name,
+                "quantity": i.quantity,
+                "unit_price": _money(i.unit_price),
+                "shipped_from": [f"{a.warehouse_name} ({a.quantity})" for a in i.allocations],
+            }
+            for i in order.items
+        ],
+        "shipping_cost": _money(order.shipping_cost),
+        "total": _money(order.total),
+    }
+
+
+def _get_order(ctx: ToolContext, args: GetOrderArgs) -> ToolOutcome:
+    order = get_order(ctx.session, ctx.user_id, args.order_code)  # someone else's -> NOT_FOUND
+    # Cards only for what is still for sale (to buy it again): product_cards skips inactive ones
+    for_sale = product_cards(ctx.session, [i.product_id for i in order.items])
+    return ToolOutcome(
+        {"ok": True, "order": _order_for_model(order)}, [c.product_id for c in for_sale]
+    )
+
+
+class StartCheckoutArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_method: DeliveryMethod | None = Field(
+        description="SHIPPING if the user asked for home delivery, PICKUP if they want to pick it "
+        "up at a branch. null if they did not say. Never guess."
+    )
+    pickup_warehouse_id: str | None = Field(
+        description="Only if the user named a branch to pick up (see the list). null otherwise."
+    )
+
+
+def _start_checkout_description(session: Session) -> str:
+    branches = "; ".join(
+        f"{w.warehouse_id} = {w.name} ({w.city})"
+        for w in list_warehouses(session)
+        if w.pickup_enabled
+    )
+    return (
+        "Send the user to the checkout when they want to BUY what is in the cart. It does NOT "
+        "buy and does NOT create an order: it checks the cart (and the branch, if one was named) "
+        "and shows a 'go to checkout' button; the user fills in the form, reviews and confirms "
+        "there. Errors: EMPTY_CART, CART_HAS_ISSUES, PICKUP_UNAVAILABLE (with the branches that "
+        f"have everything). Branches with pickup: {branches}."
+    )
+
+
+def _start_checkout(ctx: ToolContext, args: StartCheckoutArgs) -> ToolOutcome:
+    settings = get_settings()
+    policy = ShippingPolicy(
+        cost=settings.shipping_cost_usd, free_from=settings.free_shipping_from_usd
+    )
+    handoff = prepare_checkout(
+        ctx.session, ctx.user_id, args.delivery_method, args.pickup_warehouse_id, policy
+    )
+    data = {
+        "ok": True,
+        "checkout_ready": True,
+        "units": handoff.item_count,
+        "subtotal": _money(handoff.subtotal),
+        "delivery_method": handoff.delivery_method.value if handoff.delivery_method else None,
+        "pickup_branch": handoff.pickup_warehouse.name if handoff.pickup_warehouse else None,
+        "shipping_cost": _money(handoff.shipping_cost),
+        "note": "NOTHING was bought. The screen shows a 'go to checkout' button: the user "
+        "completes the form, reviews the summary and confirms the purchase there.",
+    }
+    return ToolOutcome(data, checkout=handoff)
+
+
 # --- Registry ---------------------------------------------------------------------------------
 
 
@@ -508,6 +666,11 @@ TOOLS: dict[str, Tool] = {
             ("clear_cart", NoArgs, _clear_cart),
         ]
     },
+    "get_orders": Tool("get_orders", GetOrdersArgs, lambda _s: GET_ORDERS_DESCRIPTION, _get_orders),
+    "get_order": Tool("get_order", GetOrderArgs, lambda _s: GET_ORDER_DESCRIPTION, _get_order),
+    "start_checkout": Tool(
+        "start_checkout", StartCheckoutArgs, _start_checkout_description, _start_checkout
+    ),
 }
 
 
@@ -551,6 +714,7 @@ def execute_tool(ctx: ToolContext, call: ToolCall) -> ToolExecution:
             ui_actions=outcome.ui_actions if outcome else [],
             pending_confirmation=outcome.pending_confirmation if outcome else None,
             comparison_ids=outcome.comparison_ids if outcome else [],
+            checkout=outcome.checkout if outcome else None,
         )
 
     tool = TOOLS.get(call.name)

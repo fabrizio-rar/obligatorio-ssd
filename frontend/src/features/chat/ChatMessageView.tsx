@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { ShoppingBagIcon } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
 
 import { getProductCards } from '@/api/endpoints'
-import { MIN_COMPARE, type AgentResponse, type PendingAction } from '@/api/types'
+import { MIN_COMPARE, type AgentResponse, type CheckoutHandoff, type PendingAction } from '@/api/types'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCart, useClearCart, useRemoveFromCart } from '@/features/cart/useCart'
@@ -10,6 +11,7 @@ import { ProductRow, ProductThumb } from '@/features/catalog/ProductCard'
 import { ProductImage } from '@/features/catalog/ProductImage'
 import { ComparisonTable } from '@/features/compare/ComparisonTable'
 import { compareUrl, useComparison } from '@/features/compare/useComparison'
+import { formatPrice } from '@/lib/format'
 
 import type { ChatMessage, ConfirmationState } from './messages'
 
@@ -54,6 +56,7 @@ export function ChatMessageView({ message, busy, retryText, onRetry, onConfirmat
       <AssistantText text={response.message} />
       {question && !response.message.includes(question) && <p className="font-medium">{question}</p>}
       <ResponseProducts response={response} />
+      {response.checkout && <CheckoutCard handoff={response.checkout} />}
       {response.pending_confirmation && confirmation && (
         <ConfirmationCard pending={response.pending_confirmation} state={confirmation} onResolve={onConfirmation} />
       )}
@@ -229,6 +232,67 @@ function ConfirmationCard({
       {state === 'stale' && (
         <p className="text-xs text-muted-foreground">De una conversación anterior: si querés, hacelo desde el carrito.</p>
       )}
+    </div>
+  )
+}
+
+/**
+ * start_checkout's hand-off: a summary and a button to the checkout, prefilled with the delivery
+ * method and branch the user said. Nothing is bought here: the checkout's own button buys.
+ */
+function CheckoutCard({ handoff }: { handoff: CheckoutHandoff }) {
+  const navigate = useNavigate()
+  const delivery =
+    handoff.delivery_method === 'PICKUP' && handoff.pickup_warehouse
+      ? `Retiro en ${handoff.pickup_warehouse.name}`
+      : handoff.delivery_method === 'SHIPPING'
+        ? 'Envío a domicilio'
+        : 'Elegís la entrega en el checkout'
+  const shipping = Number(handoff.shipping_cost) === 0 ? 'Gratis' : formatPrice(handoff.shipping_cost, handoff.currency)
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-primary/30 bg-background p-3">
+      <div className="flex items-center gap-2">
+        <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <ShoppingBagIcon className="size-4" />
+        </span>
+        <div className="leading-tight">
+          <p className="text-sm font-semibold">Listo para el checkout</p>
+          <p className="text-xs text-muted-foreground">
+            {handoff.item_count} {handoff.item_count === 1 ? 'unidad' : 'unidades'} · {delivery}
+          </p>
+        </div>
+      </div>
+      <dl className="flex flex-col gap-0.5 text-xs">
+        <div className="flex justify-between">
+          <dt className="text-muted-foreground">Subtotal</dt>
+          <dd className="tabular-nums">{formatPrice(handoff.subtotal, handoff.currency)}</dd>
+        </div>
+        {handoff.delivery_method !== 'PICKUP' && (
+          <div className="flex justify-between">
+            <dt className="text-muted-foreground">Envío</dt>
+            <dd className="tabular-nums">{shipping}</dd>
+          </div>
+        )}
+        <div className="flex justify-between text-sm font-semibold">
+          <dt>Total</dt>
+          <dd className="tabular-nums">{formatPrice(handoff.total, handoff.currency)}</dd>
+        </div>
+      </dl>
+      <Button
+        onClick={() =>
+          navigate('/checkout', {
+            state: {
+              prefill: {
+                delivery_method: handoff.delivery_method,
+                pickup_warehouse_id: handoff.pickup_warehouse?.warehouse_id ?? null,
+              },
+            },
+          })
+        }
+      >
+        Ir al checkout
+      </Button>
+      <p className="text-center text-xs text-muted-foreground">Revisás y confirmás la compra en el checkout.</p>
     </div>
   )
 }

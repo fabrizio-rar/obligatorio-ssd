@@ -10,8 +10,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain.checkout import CheckoutHandoff
+
 ResponseType = Literal[
-    "recommendation", "comparison", "clarification", "info", "cart_update", "error"
+    "recommendation", "comparison", "clarification", "info", "cart_update", "checkout", "error"
 ]
 UiAction = Literal["refresh_cart"]
 
@@ -26,7 +28,8 @@ class ModelResponse(BaseModel):
             "recommendation: you recommend products; comparison: you compared products; "
             "clarification: you need more info "
             "before acting; info: an answer without recommending; cart_update: you changed "
-            "the cart; error: you could not help"
+            "the cart; checkout: you sent the user to the checkout with start_checkout; "
+            "error: you could not help"
         )
     )
     message: str = Field(description="Reply to the user, in Spanish")
@@ -57,6 +60,9 @@ class AgentResponse(ModelResponse):
     # Products of the last compare_products in the turn: the UI draws the table with
     # GET /api/products/compare?ids=...
     comparison_ids: list[str] = Field(default_factory=list)
+    # From a successful start_checkout: the UI shows a "go to checkout" card with this prefill.
+    # It never buys: the purchase is the checkout's button (POST /api/orders/{id}/confirm).
+    checkout: CheckoutHandoff | None = None
 
 
 FALLBACK_MESSAGES = {

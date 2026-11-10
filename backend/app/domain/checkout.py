@@ -420,6 +420,79 @@ def checkout_options(session: Session, user_id: int, policy: ShippingPolicy) -> 
     )
 
 
+def _check_pickup(session: Session, cart: CartView, warehouse_id: str | None) -> Warehouse:
+    """The branch exists, has pickup, and has the WHOLE cart. Otherwise PICKUP_UNAVAILABLE
+    with what is missing and the branches that can (and shipping as the way out)."""
+    warehouse = session.get(Warehouse, warehouse_id) if warehouse_id else None
+    if warehouse is None or not warehouse.pickup_enabled:
+        valid = session.scalars(
+            select(Warehouse.id).where(Warehouse.pickup_enabled.is_(True)).order_by(Warehouse.id)
+        ).all()
+        raise DomainError(
+            "INVALID_INPUT",
+            "Esa sucursal no existe o no tiene retiro",
+            {
+                "field": "pickup_warehouse_id",
+                "pickup_warehouse_id": warehouse_id,
+                "valid_warehouses": list(valid),
+            },
+        )
+    options = _pickup_options(session, cart)
+    chosen = next(o for o in options if o.warehouse_id == warehouse.id)
+    if not chosen.can_fulfill:
+        raise DomainError(
+            "PICKUP_UNAVAILABLE",
+            f"{warehouse.name} no tiene stock de todo tu carrito",
+            {
+                "warehouse_id": warehouse.id,
+                "missing": [m.model_dump() for m in chosen.missing],
+                "warehouses_that_can": [o.warehouse_id for o in options if o.can_fulfill],
+                "suggestion": "SHIPPING",
+            },
+        )
+    return warehouse
+
+
+class CheckoutHandoff(BaseModel):
+    """What the agent's start_checkout leaves for the UI: a "go to checkout" card, with the
+    delivery method and branch the user said (editable prefill). Nothing is created or bought."""
+
+    delivery_method: DeliveryMethod | None
+    pickup_warehouse: WarehouseRef | None
+    currency: str
+    item_count: int
+    subtotal: Decimal
+    shipping_cost: Decimal  # with the chosen method (shipping when none was chosen)
+    total: Decimal
+
+
+def prepare_checkout(
+    session: Session,
+    user_id: int,
+    method: DeliveryMethod | None,
+    warehouse_id: str | None,
+    policy: ShippingPolicy,
+) -> CheckoutHandoff:
+    """Checks that the cart can go to checkout (and the branch, if one was named). Creates
+    nothing: the order is created by the checkout form, and only its button buys."""
+    cart = _usable_cart(session, user_id)
+    if warehouse_id and method is None:
+        method = DeliveryMethod.PICKUP
+    warehouse = None
+    if method == DeliveryMethod.PICKUP and warehouse_id:
+        warehouse = _check_pickup(session, cart, warehouse_id)
+    cost = shipping_cost(method or DeliveryMethod.SHIPPING, cart.total, policy)
+    return CheckoutHandoff(
+        delivery_method=method,
+        pickup_warehouse=_warehouse_ref(warehouse) if warehouse else None,
+        currency=cart.currency,
+        item_count=cart.item_count,
+        subtotal=cart.total,
+        shipping_cost=cost,
+        total=cart.total + cost,
+    )
+
+
 def create_checkout(
     session: Session, user_id: int, request: CheckoutRequest, policy: ShippingPolicy
 ) -> OrderView:
@@ -430,29 +503,7 @@ def create_checkout(
     method = request.delivery_method
 
     if method == DeliveryMethod.PICKUP:
-        warehouse = session.get(Warehouse, request.pickup_warehouse_id)
-        if warehouse is None or not warehouse.pickup_enabled:
-            raise DomainError(
-                "INVALID_INPUT",
-                "Esa sucursal no existe o no tiene retiro",
-                {
-                    "field": "pickup_warehouse_id",
-                    "pickup_warehouse_id": request.pickup_warehouse_id,
-                },
-            )
-        options = _pickup_options(session, cart)
-        chosen = next(o for o in options if o.warehouse_id == warehouse.id)
-        if not chosen.can_fulfill:
-            raise DomainError(
-                "PICKUP_UNAVAILABLE",
-                f"{warehouse.name} no tiene stock de todo tu carrito",
-                {
-                    "warehouse_id": warehouse.id,
-                    "missing": [m.model_dump() for m in chosen.missing],
-                    "warehouses_that_can": [o.warehouse_id for o in options if o.can_fulfill],
-                    "suggestion": "SHIPPING",
-                },
-            )
+        _check_pickup(session, cart, request.pickup_warehouse_id)
     else:
         _, short = _allocate(_stock(session, list(wanted)), method, None, wanted)
         if short:

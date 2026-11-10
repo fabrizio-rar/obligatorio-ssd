@@ -104,6 +104,9 @@ def test_search_then_recommend(db):
         "update_cart_item",
         "remove_from_cart",
         "clear_cart",
+        "get_orders",
+        "get_order",
+        "start_checkout",
     ]
     assert "calls -> " in first["tools"][0].description  # use cases per category
     # Second step: only the tool output, chained to the previous response
@@ -355,6 +358,9 @@ def test_both_tools_are_offered(db):
         "update_cart_item",
         "remove_from_cart",
         "clear_cart",
+        "get_orders",
+        "get_order",
+        "start_checkout",
     ]
 
 

@@ -28,6 +28,7 @@ export function normalizeResponse(raw: StoredMessage['response'], content: strin
     ui_actions: raw?.ui_actions ?? [],
     pending_confirmation: raw?.pending_confirmation ?? null,
     comparison_ids: raw?.comparison_ids ?? [],
+    checkout: raw?.checkout ?? null,
   }
 }
 

@@ -104,10 +104,22 @@ export function CheckoutPage() {
       </div>
     )
   }
-  return <Checkout />
+  // A new navigation (e.g. the chat's "Ir al checkout" with another prefill) starts a fresh form
+  return <Checkout key={location.key} prefill={readPrefill(location.state)} />
 }
 
-function Checkout() {
+/** From the chat's checkout card (start_checkout): delivery method and branch, both editable. */
+function readPrefill(state: unknown): Partial<Form> {
+  const prefill = (state as { prefill?: { delivery_method?: DeliveryMethod | null; pickup_warehouse_id?: string | null } } | null)
+    ?.prefill
+  if (!prefill) return {}
+  return {
+    ...(prefill.delivery_method ? { delivery_method: prefill.delivery_method } : {}),
+    ...(prefill.pickup_warehouse_id ? { delivery_method: 'PICKUP' as const, pickup_warehouse_id: prefill.pickup_warehouse_id } : {}),
+  }
+}
+
+function Checkout({ prefill }: { prefill: Partial<Form> }) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const cart = useCart()
@@ -121,7 +133,7 @@ function Checkout() {
     placeholderData: keepPreviousData, // no skeleton flash while it refetches
     retry: false,
   })
-  const [form, setForm] = useState<Form>(EMPTY)
+  const [form, setForm] = useState<Form>({ ...EMPTY, ...prefill })
   const [errors, setErrors] = useState<Errors>({})
   const [order, setOrder] = useState<Order | null>(null)
   const [problem, setProblem] = useState<string | null>(null)

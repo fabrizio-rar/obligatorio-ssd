@@ -26,6 +26,7 @@ from app.agent.llm.schema import strict_json_schema
 from app.agent.response_schema import AgentResponse, ModelResponse, PendingAction, fallback
 from app.agent.state import AgentState, summary
 from app.agent.tools import ToolContext, ToolExecution, execute_tool, tool_specs
+from app.domain.checkout import CheckoutHandoff
 
 SYSTEM_PROMPT = (Path(__file__).parent / "prompts" / "system.md").read_text(encoding="utf-8")
 RESPONSE_SCHEMA = strict_json_schema(ModelResponse)  # what the MODEL may write
@@ -95,6 +96,7 @@ async def run_turn(
     ctx.seen_product_ids = seen  # same set: tools see what the loop adds
     ui_actions: list[str] = []
     comparison_ids: list[str] = []  # last successful compare_products of the turn
+    checkout: list[CheckoutHandoff] = []  # last successful start_checkout of the turn
     signatures: set[str] = set()
     format_retried = False
 
@@ -106,9 +108,10 @@ async def run_turn(
     def finish(response: ModelResponse, reason: str) -> TurnResult:
         # The backend adds what the tools did (the model cannot set these fields)
         result.response = AgentResponse(
-            **response.model_dump(exclude={"ui_actions", "comparison_ids"}),
+            **response.model_dump(exclude={"ui_actions", "comparison_ids", "checkout"}),
             ui_actions=list(dict.fromkeys(ui_actions)),
             comparison_ids=comparison_ids if reason == "goal_reached" else [],
+            checkout=checkout[-1] if checkout and reason == "goal_reached" else None,
         )
         result.stop_reason = reason
         result.latency_ms = int((time.monotonic() - started) * 1000)
@@ -161,6 +164,8 @@ async def run_turn(
                 ui_actions.extend(execution.ui_actions)
                 if execution.comparison_ids:
                     comparison_ids[:] = execution.comparison_ids
+                if execution.checkout is not None:
+                    checkout.append(execution.checkout)
                 if execution.pending_confirmation is not None:
                     # Stop: human confirmation needed. Later calls of this step are not run.
                     pending = execution.pending_confirmation

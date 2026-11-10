@@ -17,15 +17,15 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [x] Esqueleto del monorepo + Docker (N1): `db`, `backend` y `frontend` (Vite en `:5173`, proxy `/api` → backend); el frontend tiene router, login y sesión con token, catálogo, detalle, carrito y chat. Checkout y órdenes llegan con sus endpoints
 - [x] Ingesta del Excel (N2): 8 hojas + reporte en `reports/ingest_report.json`. Los embeddings (paso 5) se suman con N8 y el usuario demo (paso 6) con N3
 - [x] Búsqueda (N8): embeddings en `product_embeddings` (`scripts.index_embeddings`) + `retrieval/search.py` (filtros SQL + vectorial + usos como señal, RRF). La conecta al agente N9
-- [~] Agente (N9): loop + `POST /api/chat` (varios turnos, con login, sin streaming) + historial `GET /api/conversations` y `/{id}/messages` + 9 tools (`search_products`, `get_product`, `get_related_products`, `compare_products` y las 5 de carrito, nivel 3 con confirmación en la UI). Faltan `get_orders`, `get_order` y `start_checkout` (dependen del checkout, N6)
+- [x] Agente (N9): loop + `POST /api/chat` (varios turnos, con login, sin streaming) + historial `GET /api/conversations` y `/{id}/messages` + 12 tools (`search_products`, `get_product`, `get_related_products`, `compare_products`, las 5 de carrito con nivel 3 confirmado en la UI, `get_orders`, `get_order` y `start_checkout`, que nunca compra: deja un botón "Ir al checkout" precargado)
 - [x] Auth (N3) y catálogo (N4): backend (`/api/auth/*`, `/api/products` con filtros de categoría, marca, precio y stock y orden (`sort`), `/api/products/{id}`, `/api/categories`, `/api/brands`, `/api/warehouses`) + UI (login/registro, grilla con filtros y paginación, detalle con specs, stock por sucursal y relacionados)
 - [x] Carrito (N5): backend + tools del agente listos (`domain/cart.py`, `/api/cart*`, `get_cart`/`add_to_cart`/`update_cart_item`/`remove_from_cart`/`clear_cart`) + UI (drawer con +/−, quitar, vaciar con confirmación, avisos de stock; badge que se refresca con `ui_actions`)
 - [x] Chat en el frontend (N11): tarjetas por ID (`/products?ids=`), tabla comparativa (`comparison_ids` → `/api/products/compare`, compacta en el chat y completa en `/compare`), aclaraciones, chips, reintentar, tarjeta de confirmación de nivel 3 e historial de conversaciones
 - [x] `AGENTS.md` + skills (N14): `testing`, `mercanova-review`, `add-agent-tool`
 - [x] Voz (N12): backend (`POST /api/transcribe`) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input)
-- [x] Tests (N13): 354 de backend (`pytest`, sin OpenAI), incluidos la transacción de compra y la concurrencia
-- [~] Robustez del agente (N10): todo salvo el retry ante errores transitorios de la DB
-- [x] Checkout (N6) y órdenes (N7): backend (`domain/checkout.py`, `/api/checkout*`, `/api/orders*`, transacción con revalidación y asignación por sucursal) + UI (`/checkout`, modal de confirmación, compra confirmada, "Mis órdenes"). Ver `docs/PLAN.md` §12.1 y §12.2. Faltan las tools `start_checkout`, `get_orders` y `get_order` (N9)
+- [x] Tests (N13): 366 de backend (`pytest`, sin OpenAI), incluidos la transacción de compra y la concurrencia
+- [x] Robustez del agente (N10). Sin retry propio ante errores de la DB (decisión: `pool_pre_ping` + rollback)
+- [x] Checkout (N6) y órdenes (N7): backend (`domain/checkout.py`, `/api/checkout*`, `/api/orders*`, transacción con revalidación y asignación por sucursal) + UI (`/checkout`, modal de confirmación, compra confirmada, "Mis órdenes"). Ver `docs/PLAN.md` §12.1 y §12.2
 
 > Cuando se complete un ítem del núcleo, actualizá esta checklist **y** la columna "Estado" de `docs/PLAN.md` §20.1 en el mismo cambio.
 

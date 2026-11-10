@@ -4,7 +4,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 
 Obligatorio 2 de **Sistemas de Soporte de Decisión** (ORT, 2026).
 
-> **Estado (09/11/2026):** el núcleo compra de punta a punta: catálogo con filtros, auth, carrito, asistente (búsqueda RAG, comparación, carrito por chat, voz 🎤) y checkout con envío o retiro en sucursal, confirmación y "Mis órdenes". Faltan las tools del agente para órdenes y los extras. Detalle en [`docs/PLAN.md` §0.1](docs/PLAN.md#01-estado-de-la-implementación-0811).
+> **Estado (10/11/2026):** el núcleo está completo: catálogo con filtros, auth, carrito, asistente (búsqueda RAG, comparación, carrito y órdenes por chat, checkout precargado desde el chat, voz 🎤) y checkout con envío o retiro en sucursal, confirmación y "Mis órdenes". Siguen los extras. Detalle en [`docs/PLAN.md` §0.1](docs/PLAN.md#01-estado-de-la-implementación-0811).
 
 ---
 

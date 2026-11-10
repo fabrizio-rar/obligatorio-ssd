@@ -195,7 +195,14 @@ export interface Cart {
 }
 
 // --- Chat: backend/app/agent/response_schema.py and service.py ---------------------------------
-export type AgentResponseType = 'recommendation' | 'comparison' | 'clarification' | 'info' | 'cart_update' | 'error'
+export type AgentResponseType =
+  | 'recommendation'
+  | 'comparison'
+  | 'clarification'
+  | 'info'
+  | 'cart_update'
+  | 'checkout'
+  | 'error'
 export type UiAction = 'refresh_cart'
 
 /** Level-3 action (remove or clear): the agent does not run it, the user confirms with a button. */
@@ -215,6 +222,19 @@ export interface AgentResponse {
   pending_confirmation: PendingAction | null
   // Filled by the backend from the last compare_products of the turn: draw the table with GET /api/products/compare
   comparison_ids: string[]
+  // Filled by the backend from a successful start_checkout: a "go to checkout" card. It never buys.
+  checkout: CheckoutHandoff | null
+}
+
+/** backend/app/domain/checkout.py::CheckoutHandoff: prefill (delivery + branch) and a summary. */
+export interface CheckoutHandoff {
+  delivery_method: DeliveryMethod | null
+  pickup_warehouse: WarehouseRef | null
+  currency: string
+  item_count: number
+  subtotal: string
+  shipping_cost: string
+  total: string
 }
 
 export interface TurnMeta {

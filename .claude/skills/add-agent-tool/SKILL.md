@@ -81,7 +81,7 @@ Mirá en `--verbose` **qué tool eligió y con qué argumentos**. Probá tambié
 
 `docs/PLAN.md` §10.4 (fila de la tool) y §10.9.1 (resultados reales), el estado de N9 en §20.1 y la checklist de `AGENTS.md`.
 
-## Lecciones de las primeras 9 tools
+## Lecciones de las primeras 12 tools
 
 | Qué pasó | Regla |
 |---|---|
@@ -91,3 +91,5 @@ Mirá en `--verbose` **qué tool eligió y con qué argumentos**. Probá tambié
 | Con 7 tools, un turno de 3–4 pasos superaba el presupuesto de tokens | Recortá los resultados; si sumás tools, revisá `AGENT_MAX_TOKENS_PER_TURN` |
 | Un turno cortado después de agregar al carrito decía "no pude" | Los fallbacks informan las acciones que **sí** ocurrieron (`ui_actions`) |
 | Los mensajes de confirmación con montos | Los arma el **backend** con datos de la DB, no el modelo |
+| A "comprámelo, confirmá vos" el modelo solo se negaba (`start_checkout`) | Si una tool no puede hacer lo pedido, decí en el prompt **qué hacer en su lugar** (llevar al checkout y aclarar que confirmar es del usuario) |
+| `start_checkout` necesitaba devolver algo a la UI | Campo nuevo en `AgentResponse` (`checkout`) lleno por el backend desde `ToolOutcome`; excluirlo en el `model_dump` de `finish()` del loop |
