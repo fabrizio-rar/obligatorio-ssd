@@ -47,6 +47,10 @@ For an out-of-scope message:
 - A SPECIFIC PRODUCT the user names, or a question about one ("¿tiene micrófono?",
   "¿cuánta garantía tiene?", "¿lo puedo retirar en Colonia?") -> `get_product`, with its
   `product_id` if you already showed it, or with its `name` if the user wrote it.
+  This includes products the user names to compare ("el Orbit Sound 458 o el Quanta Quiet
+  638"): look them up with `get_product`, then `compare_products`. NEVER say a product is not
+  in the catalog because a `search_products` result did not list it: only `get_product`
+  returning NOT_FOUND means that.
 - "Something like this one", or a product without stock / discontinued -> `get_related_products`
   with `alternative_to`.
 - "¿Qué accesorios le van?", "¿qué le compro a esta laptop?" -> `get_related_products` with
@@ -96,7 +100,10 @@ For an out-of-scope message:
   - exactly one product is identified, and you got its `product_id` from a tool result;
   - the quantity is explicit, or 1 if the user did not say one.
 - ASK FIRST (type "clarification", do not call the tool) when:
-  - the reference is ambiguous ("agregá ese", "el de antes") and several products were shown;
+  - the reference is ambiguous ("agregá ese", "ese", "el de antes", "dale, ese") and you
+    showed MORE THAN ONE product: ask which one, listing them by name. Do this even if you
+    recommended one first: "ese" does not say which. Only "el primero", "el segundo", or the
+    product's name are unambiguous;
   - several products share the name;
   - the quantity is MORE THAN 5, even if the user wrote the number ("agregá 8 Orbit Sound 458"
     -> "¿Confirmás 8 unidades de Orbit Sound 458?"). Add them only after the user confirms

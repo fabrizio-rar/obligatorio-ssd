@@ -64,7 +64,7 @@ backend/app/
   agent/               # llm/, tools.py, prompts/, response_schema.py, state.py, guardrails.py, loop.py
   stt/                 # transcriber
   models/  schemas/    # SQLAlchemy / Pydantic
-backend/scripts/       # ingest, index_embeddings, search, chat, seed_demo_user (+ run_evals.py con E1)
+backend/scripts/       # ingest, index_embeddings, search, chat, seed_demo_user, simulate_price_change, run_evals
 backend/tests/         # unit/, integration/, agent/, evals/
 frontend/src/          # api/, components/ui (shadcn), features/ (auth, catalog, cart, chat, compare, voice), lib/ (sesión, formato, i18n)
 docs/                  # PLAN.md, diagramas, capturas, informe
@@ -112,7 +112,8 @@ docker compose exec backend python -m scripts.simulate_price_change MN-HDP-0004 
 docker compose exec backend pytest                 # tests (sin evals); los de integración usan TEST_DATABASE_URL
 docker compose exec backend ruff check . && docker compose exec backend ruff format --check .
 docker compose exec frontend sh -c 'npx tsc -b && npx oxlint'   # frontend: tipos (TS strict) + lint; http://localhost:5173 (hot reload sobre src/)
-# Todavía no existe (E1): docker compose exec backend python -m scripts.run_evals   # evals contra gpt-6-luna (gasta créditos)
+docker compose exec backend python -m scripts.run_evals --check   # valida los casos de tests/evals/cases.json (sin LLM, gratis)
+docker compose exec backend python -m scripts.run_evals [--efforts low,medium] [--repeat 3] [--only id1,id2]   # evals contra gpt-6-luna (~USD 0,001 por turno): reporte en reports/evals/
 ```
 
 ---
@@ -123,7 +124,7 @@ docker compose exec frontend sh -c 'npx tsc -b && npx oxlint'   # frontend: tipo
 2. **El LLM nunca compra.** No existe ninguna tool que confirme una orden. La compra solo se confirma con `POST /api/orders/{id}/confirm`, disparado por un botón de la UI.
 3. **Niveles de control de las tools** (`docs/PLAN.md` §10.4.1):
    - lectura: libre;
-   - agregar o cambiar cantidad: directo solo si el pedido es inequívoco, y con `undo_token`;
+   - agregar o cambiar cantidad: directo solo si el pedido es inequívoco (sin `undo_token`: E3 descartado);
    - quitar o vaciar: la tool **no ejecuta**, devuelve `confirmation_required`;
    - compra: fuera del agente.
 4. **El `user_id` nunca es parámetro de una tool.** Lo inyecta el backend desde el token.

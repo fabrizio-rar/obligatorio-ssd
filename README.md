@@ -130,6 +130,10 @@ docker compose exec backend python -m scripts.index_embeddings --force
 docker compose exec backend python -m scripts.seed_demo_user
 docker compose exec backend python -m scripts.simulate_price_change MN-HDP-0004 --percent -10   # demo: el precio cambia antes de confirmar
 
+# Evals contra el modelo real (gastan créditos: ~USD 0,001 por turno). Reporte en reports/evals/
+docker compose exec backend python -m scripts.run_evals --check                       # valida los casos, gratis
+docker compose exec backend python -m scripts.run_evals --efforts low,medium --repeat 3
+
 # Probar la búsqueda y el agente desde la terminal
 docker compose exec backend python -m scripts.search "headphones for video calls" \
   --category Headphones --max-price 200 --use calls
@@ -159,6 +163,7 @@ Están todas en [`.env.example`](.env.example), con un comentario cada una. Las 
 |---|---|
 | `OPENAI_API_KEY` | Chat, embeddings y voz. **Nunca la commitees.** |
 | `LLM_MODEL`, `LLM_REASONING_EFFORT` | Modelo del agente (`gpt-6-luna`, `low`) |
+| `LLM_USD_PER_1M_INPUT`, `LLM_USD_PER_1M_OUTPUT` | Precio del modelo (USD 0,10 / 0,50 por millón de tokens), para el costo del reporte de evals |
 | `EMBEDDING_MODEL`, `EMBEDDING_DIM` | `text-embedding-3-small`, 1536 dimensiones (tiene que coincidir con la migración) |
 | `STT_MODEL`, `STT_MAX_BYTES` | Voz: `gpt-4o-transcribe`, audio de hasta 2 MB |
 | `AGENT_MAX_STEPS`, `AGENT_TURN_TIMEOUT_SECONDS`, `AGENT_MAX_TOKENS_PER_TURN` | Límites de cada turno del agente |
@@ -180,10 +185,11 @@ backend/
     agent/        # loop, tools, prompt, guardrails, estado, adaptador de OpenAI (llm/)
     stt/          # transcripción de voz (OpenAI) para /api/transcribe
     ingest/       # Excel -> validación -> Postgres
+    evals/        # evals: chequeos, runner y reporte (scripts.run_evals)
     models/       # SQLAlchemy
   alembic/        # migraciones
-  scripts/        # ingest, index_embeddings, search, chat, seed_demo_user, simulate_price_change
-  tests/          # unit/ e integration/ (Postgres real, FakeLLM)
+  scripts/        # ingest, index_embeddings, search, chat, seed_demo_user, simulate_price_change, run_evals
+  tests/          # unit/ e integration/ (Postgres real, FakeLLM) + evals/cases.json (modelo real, a mano)
 frontend/src/         # detalle y estado en frontend/README.md
   api/            # cliente HTTP (token), tipos espejo del backend, endpoints
   features/       # auth, catalog, cart, chat, compare, voice (una carpeta por funcionalidad)

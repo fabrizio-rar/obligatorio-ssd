@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     llm_reasoning_effort: Literal["none", "low", "medium", "high"] = "low"
     llm_timeout_seconds: float = 60
     llm_max_retries: int = 2  # retries on 429 / 5xx / timeout (with backoff, by the SDK)
+    # Price of LLM_MODEL in USD per 1M tokens: only for reports (evals). gpt-6-luna: 0.10 / 0.50
+    llm_usd_per_1m_input: float = Field(default=0.10, ge=0)
+    llm_usd_per_1m_output: float = Field(default=0.50, ge=0)
 
     # Speech to text (docs/PLAN.md §11): OpenAI transcription API
     stt_provider: Literal["openai", "fake"] = "openai"

@@ -610,8 +610,8 @@ Principios: pocas, con nombres y descripciones claros; parámetros tipados con P
 | `compare_products` | `product_ids[2..4]` | Specs alineadas por atributo, precio, stock y rating. **Misma categoría** (`MIXED_CATEGORIES` si no); filas con `differs` (primero las que difieren); "N/D" ≠ "No"; `values[i]` corresponde a `products[i]` (hay nombres repetidos). `domain/comparison.py`, igual que `GET /api/products/compare` | Lectura |
 | `get_related_products` | `product_id`, `relation_type` (`alternative_to` / `accessory_for` / `often_bought_with`), `in_stock_only` | Relacionados activos (y con stock), por `strength`, + `filtered_out` (cuántos se descartaron por inactivos / sin stock). `domain/catalog.py::get_related`, igual que el detalle de producto | Lectura |
 | `get_cart` | — | Ítems, subtotales, total | Lectura |
-| `add_to_cart` | `product_id`, `quantity` | Carrito + `undo_token` (🟡 E3), o error `OUT_OF_STOCK` / `NOT_FOUND` / `INACTIVE`. **Solo acepta un `product_id` que vino de un tool result** en la conversación (`UNKNOWN_PRODUCT_REFERENCE` si no) | Escritura reversible (nivel 2) |
-| `update_cart_item` | `product_id`, `quantity` (≥ 1) | Carrito + `undo_token` | Escritura reversible (nivel 2) |
+| `add_to_cart` | `product_id`, `quantity` | Carrito (sin `undo_token`: E3 descartado), o error `OUT_OF_STOCK` / `NOT_FOUND` / `INACTIVE`. **Solo acepta un `product_id` que vino de un tool result** en la conversación (`UNKNOWN_PRODUCT_REFERENCE` si no) | Escritura reversible (nivel 2) |
+| `update_cart_item` | `product_id`, `quantity` (≥ 1) | Carrito | Escritura reversible (nivel 2) |
 | `remove_from_cart` | `product_id` | `{confirmation_required: true, action}`: **no ejecuta** | Nivel 3: confirmación del usuario |
 | `clear_cart` | — | `{confirmation_required: true, action}`: **no ejecuta** | Nivel 3 |
 | `get_orders` | `limit?` | Órdenes del usuario | Lectura |
@@ -635,7 +635,7 @@ La letra pide que *"las acciones que produzcan cambios relevantes en el estado d
 - el nombre coincide con varios productos (los 3 pares duplicados del dataset);
 - la cantidad es grande (más de 5) o poco clara ("varios", "unos cuantos").
 
-**Deshacer:** cada cambio de nivel 2 devuelve un `undo_token` con el estado anterior del ítem. `POST /api/cart/undo/{token}` lo restaura (válido unos minutos y solo para el último cambio). Funciona igual si el cambio vino del chat o de la UI.
+**Deshacer (E3, descartado el 10/11; queda como diseño):** cada cambio de nivel 2 devuelve un `undo_token` con el estado anterior del ítem. `POST /api/cart/undo/{token}` lo restaura (válido unos minutos y solo para el último cambio). Funciona igual si el cambio vino del chat o de la UI.
 
 **Checkout precargado:** si el usuario dijo "lo retiro en Colonia" o dio su dirección, `start_checkout` recibe esos datos, valida que la sucursal cubra el carrito y la UI abre el formulario completo. El usuario revisa, puede cambiar todo y **confirma con el botón**. Si la sucursal no alcanza, la tool devuelve `PICKUP_UNAVAILABLE` con alternativas y el agente lo explica antes de abrir el checkout.
 
@@ -867,7 +867,7 @@ sequenceDiagram
 | GET | `/api/products?ids=a,b,c` | — | Para las tarjetas del chat (máx. 20, en el mismo orden; omite inactivos e inexistentes). No se combina con `category` |
 | GET | `/api/categories` | — | |
 | GET | `/api/brands?category=` | — | Marcas con productos activos (en la categoría, si se pasa), por nombre, con `product_count`: las opciones del filtro de marca |
-| GET/POST/PATCH/DELETE | `/api/cart`, `/api/cart/items[/{product_id}]` | ✔ | Carrito. Cada mutación devuelve el carrito actualizado (`items` con precio y stock actuales, `item_count`, `total`, `can_checkout`). Errores: 404 `NOT_FOUND` / `NOT_IN_CART`, 409 `INACTIVE` / `OUT_OF_STOCK` (con `available` e `in_cart`), 422 cantidad inválida. 🟡 `undo_token` llega con E3 |
+| GET/POST/PATCH/DELETE | `/api/cart`, `/api/cart/items[/{product_id}]` | ✔ | Carrito. Cada mutación devuelve el carrito actualizado (`items` con precio y stock actuales, `item_count`, `total`, `can_checkout`). Errores: 404 `NOT_FOUND` / `NOT_IN_CART`, 409 `INACTIVE` / `OUT_OF_STOCK` (con `available` e `in_cart`), 422 cantidad inválida. Sin `undo_token` (E3 descartado) |
 | DELETE | `/api/cart` | ✔ | Vaciar carrito (lo usa el botón de confirmación de nivel 3) |
 | POST | `/api/cart/undo/{token}` | ✔ | Deshacer el último cambio |
 | GET | `/api/warehouses` | — | Sucursales (para el detalle de producto y el checkout) |
@@ -1115,7 +1115,7 @@ La letra pide *"una estrategia de testing adecuada a la arquitectura elegida y c
 | Tools | Validación de argumentos, errores uniformes, `user_id` inyectado, **las tools de nivel 3 no modifican la DB**, `undo_token` restaura el estado anterior, `start_checkout` valida el prefill | pytest | No |
 | Agente | **FakeLLM** guionado: **orden del pipeline** (un argumento inválido no llega al dominio), **cada stop condition** (objetivo, max pasos, presupuesto, loop, error, confirmación humana), retry solo ante errores transitorios, retry de formato, fallback, recorte del contexto, eventos SSE en orden | pytest | Mock |
 | STT | `POST /api/transcribe` con `FakeTranscriber`: formatos, tamaño, mínimo, `NO_SPEECH`, sin login; vocabulario del `prompt` | pytest | No |
-| **Evals** | 25–30 conversaciones contra el modelo real | `run_evals.py` + `cases.yaml` | **Sí** |
+| **Evals** | 34 conversaciones contra el modelo real (×3) | `scripts/run_evals.py` + `tests/evals/cases.json` | **Sí** |
 
 **Casos de eval basados en el dataset:**
 ```yaml
@@ -1157,6 +1157,14 @@ La letra pide *"una estrategia de testing adecuada a la arquitectura elegida y c
 **Reporte:** % de casos que pasan por categoría, latencia por turno, tools por turno, **tokens y costo en USD por corrida**. Va al PDF y respalda la elección de `gpt-6-luna` y del `reasoning effort` (`low` vs `medium`).
 **Costo:** cada corrida completa de evals cuesta centavos con `gpt-6-luna`; se corren a mano, nunca en CI.
 🟡 CI opcional: GitHub Actions con `ruff` + `pytest` (sin evals).
+
+**Evals implementadas (10/11, E1):**
+- **Casos:** `backend/tests/evals/cases.json` (JSON por decisión del equipo: sin dependencias nuevas). 34 casos y 36 turnos en 9 categorías: recomendación, aclaración, stock, comparación, carrito, checkout, órdenes, alcance (fuera de tema, inyección, mezcla) y no inventar (usados, "¿es cómodo?"). Cada turno trae sus `expect`.
+- **Chequeos** (`app/evals/checks.py`, puros y con tests en `pytest`): `tool_called`, `tool_called_any`, `no_tool`, `no_tools`, `tool_args` (`lte`, `gte`, `in`, `contains`, `null`), `error_code`, `response_type`, `products` (cantidad, precio máximo, activos, con stock, categoría, incluye/excluye; **con datos de la DB**, no del texto), `message_contains_any` / `message_not_contains` (sin tildes ni mayúsculas), `pending_confirmation`, `checkout`, `comparison`, `cart` (estado real del carrito después del turno), `orders_created` (que el agente nunca compre) y `stop_reason`.
+- **Runner** (`app/evals/runner.py`): el mismo camino que `POST /api/chat` (`chat_turn`), un usuario `eval_*` nuevo por corrida (carrito o compras previas con las funciones de dominio), las tools reales desde `tool_call_logs`; al final borra los usuarios (cascada). Concurrencia 4.
+- **Reporte** (`app/evals/report.py`, `reports/evals/<fecha>-<effort>.md|json`): % de corridas que pasan por categoría, casos inestables (pasan algunas de las 3 veces), latencia p50/p95, pasos y tool calls por turno, tokens y **costo en USD** (`LLM_USD_PER_1M_INPUT=0.10`, `LLM_USD_PER_1M_OUTPUT=0.50`, precio de `gpt-6-luna`). Con `--efforts low,medium`, además una tabla comparativa.
+- **Decisiones con el equipo:** cada caso se corre **3 veces** (el modelo no es determinista) y se compara `reasoning effort` **low vs medium**.
+- **Resultado (10/11):** `low` **102/102 (100 %)**, p50 5,1 s / p95 8,8 s, ~13 mil tokens y USD 0,0014 por turno; `medium` 100/102 (98 %), p95 10,3 s, mismo costo. **Se mantiene `low`**: `medium` no mejora y es más lento. La primera corrida dio 85 % / 89 %: al revisar las respuestas, la mayoría eran chequeos mal calibrados (frases correctas que no estaban en la lista) y dos eran problemas reales del agente que se corrigieron en el prompt (decía que un producto nombrado "no está en el catálogo" porque no aparecía en una búsqueda; a "agregá ese" con varios productos agregaba el primero). Detalle y archivos en `docs/evidence/evals/README.md`.
 
 **Implementado (08/11):** 366 tests (`tests/unit/` + `tests/integration/`, Postgres real `mercanova_test`): ingesta, retrieval, búsqueda, auth, catálogo, carrito, comparación y relacionados, historial, voz, schema estricto de las tools y el agente con `FakeLLM` (pipeline, stop conditions, nivel 3 sin ejecutar, IDs validados). Faltan: transacción de compra, concurrencia y `PRICE_CHANGED` (N6), y las evals (E1). El frontend no tiene tests (no se piden E2E).
 
@@ -1270,10 +1278,10 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 **Extras (en orden de prioridad; se cortan desde el final):**
 | # | Extra | Si no llega | Estado (08/11) |
 |---|---|---|---|
-| E1 | **Evals** (25–30 casos + reporte) | No cortar: son evidencia para los 4 pts del asistente y justifican el modelo | ⬜ (`scripts/chat.py` sirve para pruebas manuales; resultados en §10.9.1) |
-| E2 | Eventos de progreso por SSE | Respuesta sin streaming, con spinner | ⬜ |
-| E3 | Deshacer en el carrito (`undo_token`) | Queda solo la confirmación para quitar o vaciar | ⬜ |
-| E4 | Checkout precargado desde el chat | `start_checkout` abre el checkout vacío | 🟡 (10/11) `start_checkout` precarga **método de entrega y sucursal** (editables). La dirección no se precarga (decisión: el modelo podría partirla mal en calle/ciudad/departamento) |
+| E1 | **Evals** (25–30 casos + reporte) | No cortar: son evidencia para los 4 pts del asistente y justifican el modelo | ✅ (10/11) 34 casos × 3, `low` vs `medium`: **`low` 100 % (102/102)**, `medium` 98 %, ~USD 0,0014 por turno. Evidencia y análisis en `docs/evidence/evals/` |
+| E2 | Eventos de progreso por SSE | Respuesta sin streaming, con spinner | ❌ Descartado (10/11): queda la animación de "pensando" |
+| E3 | Deshacer en el carrito (`undo_token`) | Queda solo la confirmación para quitar o vaciar | ❌ Descartado (10/11): agregar o cambiar cantidad solo si el pedido es inequívoco, quitar y vaciar con confirmación |
+| E4 | Checkout precargado desde el chat | `start_checkout` abre el checkout vacío | 🟡 (10/11) `start_checkout` precarga **método de entrega y sucursal** (editables). La dirección no se precarga (decisión: el modelo podría partirla mal en calle/ciudad/departamento). Se cierra así |
 | E5 | Full-text + RRF | Solo vectorial + filtros | ⬜ (la columna `products.search_tsv` y su índice GIN ya existen) |
 | E6 | Relajación controlada de filtros | El agente dice "no hay" y sugiere ampliar el presupuesto | ⬜ (los usos ya no filtran, lo que evita la mayoría de los "0 resultados") |
 | E7 | Validación de montos en el texto del mensaje | Alcanza con el render desde la DB | ⬜ |
