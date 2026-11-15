@@ -16,7 +16,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 
 - [x] Esqueleto del monorepo + Docker (N1): `db`, `backend` y `frontend` (Vite en `:5173`, proxy `/api` → backend); el frontend tiene router, login y sesión con token, catálogo, detalle, carrito y chat. Checkout y órdenes llegan con sus endpoints
 - [x] Ingesta del Excel (N2): 8 hojas + reporte en `reports/ingest_report.json`. Los embeddings (paso 5) se suman con N8 y el usuario demo (paso 6) con N3
-- [x] Búsqueda (N8): embeddings en `product_embeddings` (`scripts.index_embeddings`) + `retrieval/search.py` (filtros SQL + vectorial + usos como señal, RRF). La conecta al agente N9
+- [x] Búsqueda (N8): embeddings en `product_embeddings` (`scripts.index_embeddings`) + `retrieval/search.py` (filtros SQL + vectorial + usos como señal + full-text sobre el nombre (E5), RRF). La conecta al agente N9
 - [x] Agente (N9): loop + `POST /api/chat` (varios turnos, con login, sin streaming) + historial `GET /api/conversations` y `/{id}/messages` + 12 tools (`search_products`, `get_product`, `get_related_products`, `compare_products`, las 5 de carrito con nivel 3 confirmado en la UI, `get_orders`, `get_order` y `start_checkout`, que nunca compra: deja un botón "Ir al checkout" precargado)
 - [x] Auth (N3) y catálogo (N4): backend (`/api/auth/*`, `/api/products` con filtros de categoría, marca, precio y stock y orden (`sort`), `/api/products/{id}`, `/api/categories`, `/api/brands`, `/api/warehouses`) + UI (login/registro, grilla con filtros y paginación, detalle con specs, stock por sucursal y relacionados)
 - [x] Carrito (N5): backend + tools del agente listos (`domain/cart.py`, `/api/cart*`, `get_cart`/`add_to_cart`/`update_cart_item`/`remove_from_cart`/`clear_cart`) + UI (drawer con +/−, quitar, vaciar con confirmación, avisos de stock; badge que se refresca con `ui_actions`)
@@ -45,7 +45,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 | DB | PostgreSQL 16 + pgvector |
 | Frontend | React + Vite + TypeScript + shadcn/ui (Tailwind) + TanStack Query |
 | LLM | **OpenAI `gpt-6-luna`** vía **Responses API** (SDK `openai`, async), detrás de la interfaz `LLMProvider` (`docs/PLAN.md` §10.0) |
-| Embeddings | **OpenAI `text-embedding-3-small`** (1536 dims) detrás de la interfaz `Embedder`; un vector por producto. Sin key se saltea y la búsqueda cae a full-text (`docs/PLAN.md` §9.3) |
+| Embeddings | **OpenAI `text-embedding-3-small`** (1536 dims) detrás de la interfaz `Embedder`; un vector por producto. Sin key se saltea y la búsqueda cae a filtros + usos + full-text sobre el nombre (`docs/PLAN.md` §9.3) |
 | Voz | **API de OpenAI** (`gpt-4o-transcribe`) detrás de la interfaz `Transcriber`; solo transcribe, el texto va a `/api/chat` (`docs/PLAN.md` §11) |
 | Tests | pytest (backend). Sin E2E |
 | Infra | Docker Compose: `db`, `backend`, `frontend`. El LLM es externo (API de OpenAI) |
@@ -140,7 +140,7 @@ docker compose exec backend python -m scripts.run_evals [--efforts low,medium] [
     - Tools con `strict: true`, con el schema generado desde Pydantic.
     - El structured output se parsea desde el **item de salida correspondiente**, no desde `output_text`. Si no valida → retry de formato.
     - `429` / `5xx` / timeout → retry con backoff. `401` → error irrecuperable con mensaje claro. Se registra `usage` en cada llamada.
-    - **Sin `OPENAI_API_KEY`, la app tiene que levantar igual:** el chat queda deshabilitado, con un mensaje, y la búsqueda semántica cae a full-text + filtros.
+    - **Sin `OPENAI_API_KEY`, la app tiene que levantar igual:** el chat queda deshabilitado, con un mensaje, y la búsqueda semántica cae a filtros + usos + full-text sobre el nombre.
     - **El código del agente no importa `openai` directamente:** solo el adaptador en `agent/llm/`. Para embeddings, el único que lo importa es `retrieval/embeddings.py`.
 
 ## Configuración y seguridad

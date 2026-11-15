@@ -20,7 +20,7 @@
 | Auth | **Login falso**: register y login con usuario y contraseña (hash bcrypt) y token opaco en la DB |
 | Base de datos | **PostgreSQL 16 + pgvector**: datos operacionales y vectores en el mismo motor |
 | Ingesta | Script idempotente: las **8 hojas** del Excel → validación → tablas SQL normalizadas → embeddings |
-| Búsqueda | **Solo por chat** (sin buscador de texto en la UI; el catálogo solo tiene filtros de categoría, marca, precio y stock). **Híbrida**: filtros SQL (categoría, precio, stock, activo) + vectorial + usos recomendados como señal, fusionadas con RRF. Full-text = extra E5 (§9.5) |
+| Búsqueda | **Solo por chat** (sin buscador de texto en la UI; el catálogo solo tiene filtros de categoría, marca, precio y stock). **Híbrida**: filtros SQL (categoría, precio, stock, activo) + vectorial + usos recomendados como señal + full-text sobre el nombre (E5), fusionadas con RRF (§9.5) |
 | Chunking | **1 documento por producto** (las descripciones tienen 170–280 caracteres), sin precio ni stock |
 | Embeddings | **OpenAI `text-embedding-3-small`** (multilingüe): el catálogo está **en inglés** y el usuario habla **en español**. Un vector por producto |
 | LLM | **OpenAI `gpt-6-luna`** vía **Responses API** (function calling + structured outputs), detrás de una interfaz `LLMProvider`. ~USD 0,002 por turno |
@@ -472,7 +472,7 @@ Tags: audio; headphones; over-ear; music; calls; commuting
 - **Multilingüe, obligatorio:** el buscador de la UI recibe texto en español y lo compara contra documentos en inglés.
 - **Decisión (v4):** **API de OpenAI** con `text-embedding-3-small` (1536 dims), detrás de la interfaz `Embedder.embed_documents()` / `embed_query()` (`retrieval/embeddings.py`). Modelo, dimensión y proveedor por env var.
   - **Por qué API y no `fastembed` local:** el costo es casi nulo (indexar los 360 productos ≈ 90 mil tokens ≈ USD 0,002; cada consulta, fracciones de centavo); evita bajar un modelo de ~2 GB y sumar 2–3 GB de RAM en la máquina de cada integrante; el SDK `openai` ya está en el stack, y el chat ya depende de la key.
-  - **Costo de la decisión:** la búsqueda semántica necesita key y red **también al consultar**. **Fallback:** sin key, o si la API falla, el indexado se saltea (con aviso) y la búsqueda cae a full-text + filtros SQL. La app levanta igual.
+  - **Costo de la decisión:** la búsqueda semántica necesita key y red **también al consultar**. **Fallback:** sin key, o si la API falla, el indexado se saltea (con aviso) y la búsqueda cae a filtros SQL + usos + full-text sobre el nombre (y rating). La app levanta igual.
   - `fastembed` + `multilingual-e5-large` queda como alternativa documentada: sería otra clase detrás de `Embedder`.
 - **Un vector por producto** (§9.2): los documentos son cortos (~150–250 tokens) y tratan de un solo producto, así que el vector no se diluye; partirlos haría perder contexto (un chunk de specs no sabe de qué producto es). Lo que el vector capta mal (números, specs puntuales, nombres exactos) lo cubren los filtros SQL y el full-text (§9.5). 🟡 A futuro, multi-vector o split por campo **si las evals lo justifican**.
 - **Indexado:** `python -m scripts.index_embeddings [--force]`. El entrypoint lo corre en cada arranque, después de la ingesta. Solo embebe lo nuevo o cambiado (`content_hash = sha256(modelo + texto)`): sin cambios no hace ninguna llamada, y si cambia el modelo se re-embebe todo. Hace commit por lote: si la API falla a mitad, se conserva lo hecho. Si falla, el arranque sigue. Escribe `reports/embeddings_report.json` (tokens y costo estimado).
@@ -506,10 +506,11 @@ SearchQuery(
 1. **Filtros duros en SQL:** `active = true` (siempre), categoría, subcategoría, marca, precio (`current_price`), `NOT (not_recommended_for && exclude_use_cases)` y `available > 0` cuando corresponde.
 2. **Ranking semántico:** top 20 por coseno dentro del conjunto filtrado.
 3. **Ranking por usos:** los candidatos que tienen los usos pedidos, por cantidad de coincidencias. **Es una señal de ranking, no un filtro:** un uso mal elegido empeora el orden pero nunca deja el resultado vacío. Así, el ejemplo de la letra con `video calls` en auriculares pasó de 0 resultados a 5.
-4. **Fusión RRF** (`k = 60`) de los rankings 2 y 3, con desempate por rating y luego por cantidad de reviews. Los candidatos que no están en ningún ranking (por ejemplo, un producto todavía sin embedding) no se ocultan: van al final.
-5. **Nada dentro del presupuesto:** si `max_price` deja 0 candidatos, el resultado trae `cheapest_above_budget`: los 3 productos **más baratos** que cumplen todos los demás filtros, ordenados por precio. El ranking normal es por relevancia, así que sin esto el agente no puede saber cuál es "el más barato": con "auriculares por menos de USD 20" decía que el más barato era el Orbit Sound 458 (USD 71,31) cuando hay uno a USD 29,18.
-6. **Fallback:** si falla el embedding de la consulta, se rankea por usos y rating y el resultado avisa con `semantic_used: false`.
-7. **Resultado:** precio y stock **leídos de la DB** (nunca del índice), más SKU (por los nombres duplicados), estado de stock y usos que matchearon. Los errores son `DomainError` tipados (por ejemplo `UNKNOWN_BRAND`, con las marcas válidas en `details`).
+4. **Ranking por nombre (full-text, E5, 10/11):** los candidatos cuyo **nombre** comparte palabras con la consulta (marca, línea, número de modelo), ordenados por `ts_rank` sobre `search_tsv` con peso solo para el nombre (peso A), top 20. Las palabras van con OR: "Orbit Sound 458" pone primero el 458 y después el resto de la línea Orbit Sound. **Solo el nombre**, a propósito: las descripciones ya las cubre el vector, y palabras genéricas ("headphones", "wireless") matchearían medio catálogo y meterían ruido. Una consulta sin palabras del nombre deja este ranking vacío y el orden queda igual que antes.
+5. **Fusión RRF** (`k = 60`) de los rankings 2, 3 y 4, con desempate por rating y luego por cantidad de reviews. Los candidatos que no están en ningún ranking (por ejemplo, un producto todavía sin embedding) no se ocultan: van al final.
+6. **Nada dentro del presupuesto:** si `max_price` deja 0 candidatos, el resultado trae `cheapest_above_budget`: los 3 productos **más baratos** que cumplen todos los demás filtros, ordenados por precio. El ranking normal es por relevancia, así que sin esto el agente no puede saber cuál es "el más barato": con "auriculares por menos de USD 20" decía que el más barato era el Orbit Sound 458 (USD 71,31) cuando hay uno a USD 29,18.
+7. **Fallback:** si falla el embedding de la consulta (o no hay key), se rankea por usos, nombre y rating y el resultado avisa con `semantic_used: false`.
+8. **Resultado:** precio y stock **leídos de la DB** (nunca del índice), más SKU (por los nombres duplicados), estado de stock y usos que matchearon. Los errores son `DomainError` tipados (por ejemplo `UNKNOWN_BRAND`, con las marcas válidas en `details`).
 
 Probar a mano: `python -m scripts.search "comfortable headphones for video calls" --category Headphones --max-price 200 --use calls`.
 
@@ -518,7 +519,8 @@ Probar a mano: `python -m scripts.search "comfortable headphones for video calls
 - Con `--use photos` sin categoría aparecen impresoras: en el dataset, `photos` es un uso de impresoras. El agente tiene que elegir la categoría; la descripción de los usos por categoría (N9) lo guía.
 - Los números ("alta tasa de refresco", "batería ≥ 20 h") no los capta el vector: eso es `spec_filters` (E8).
 - Un producto sin stock buscado por nombre no aparece con `in_stock_only = true`. Para productos nombrados, el agente usa `get_product` (N9), que sí informa "sin stock" o "discontinuado".
-- 🟡 **E5** (full-text + RRF) y **E6** (relajación) quedan como extras: con la consulta en inglés, el vector ya encuentra nombres exactos, y como los usos no filtran, "0 resultados" solo queda para filtros imposibles, que el agente explica.
+- **E5** (10/11): en las evals, el agente buscó "Orbit Sound 458" con `search_products`, no lo vio entre los resultados y dijo que no existía: el vector **no** siempre encuentra nombres exactos. Se resolvió en el prompt (un producto nombrado va con `get_product`) y además con el ranking por nombre (paso 4): ahora "Orbit Sound 458" sale primero, con y sin embeddings.
+- 🟡 **E6** (relajación) queda como extra: como los usos no filtran, "0 resultados" solo queda para filtros imposibles, que el agente explica (con `cheapest_above_budget` si es el presupuesto).
 
 ---
 
@@ -1282,7 +1284,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | E2 | Eventos de progreso por SSE | Respuesta sin streaming, con spinner | ❌ Descartado (10/11): queda la animación de "pensando" |
 | E3 | Deshacer en el carrito (`undo_token`) | Queda solo la confirmación para quitar o vaciar | ❌ Descartado (10/11): agregar o cambiar cantidad solo si el pedido es inequívoco, quitar y vaciar con confirmación |
 | E4 | Checkout precargado desde el chat | `start_checkout` abre el checkout vacío | 🟡 (10/11) `start_checkout` precarga **método de entrega y sucursal** (editables). La dirección no se precarga (decisión: el modelo podría partirla mal en calle/ciudad/departamento). Se cierra así |
-| E5 | Full-text + RRF | Solo vectorial + filtros | ⬜ (la columna `products.search_tsv` y su índice GIN ya existen) |
+| E5 | Full-text + RRF | Solo vectorial + filtros | ✅ (10/11) full-text sobre el **nombre** (`search_tsv`, peso A, palabras con OR) como tercer ranking de RRF: nombres exactos y números de modelo salen primero, también sin key (§9.5) |
 | E6 | Relajación controlada de filtros | El agente dice "no hay" y sugiere ampliar el presupuesto | ⬜ (los usos ya no filtran, lo que evita la mayoría de los "0 resultados") |
 | E7 | Validación de montos en el texto del mensaje | Alcanza con el render desde la DB | ⬜ |
 | E8 | `spec_filters`, skills de la app, streaming token a token, CI | Van a "trabajo futuro" en el PDF | ⬜ |

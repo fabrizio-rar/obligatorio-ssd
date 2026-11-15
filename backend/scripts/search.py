@@ -55,7 +55,10 @@ def main(argv: list[str] | None = None) -> int:
             print(error.to_dict(), file=sys.stderr)
             return 1
 
-    mode = "semantic + use cases" if result.semantic_used else "FALLBACK (no embeddings)"
+    if result.semantic_used:
+        mode = "semantic + use cases + name"
+    else:
+        mode = "FALLBACK (use cases + name, no embeddings)"
     print(f"{result.total_candidates} candidates after filters | ranking: {mode}")
     for hit in result.hits:
         uses = f"  uses: {', '.join(hit.matched_use_cases)}" if hit.matched_use_cases else ""

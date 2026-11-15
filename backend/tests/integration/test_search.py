@@ -163,6 +163,42 @@ def test_wrong_use_case_does_not_empty_the_result(db):
     assert all(h.matched_use_cases == [] for h in result.hits)
 
 
+# --- Name ranking (full-text, E5) ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("embedder", [EMBEDDER, None], ids=["semantic", "no-embedder"])
+def test_exact_name_ranks_first(db, embedder):
+    # The eval case: the agent searched "Orbit Sound 458" and did not see it in the results
+    result = _search(db, embedder=embedder, query="Orbit Sound 458 headphones", limit=5)
+    assert result.hits[0].product_id == "MN-HDP-0002"
+    assert result.hits[0].name == "Orbit Sound 458"
+
+
+def test_partial_name_brings_the_whole_line(db):
+    result = _search(db, embedder=None, query="Orbit Sound", category="Headphones", limit=5)
+    assert {h.product_id for h in result.hits[:2]} == {"MN-HDP-0002", "MN-HDP-0026"}
+
+
+def test_name_ranking_keeps_the_hard_filters(db):
+    # Same name, one active and one inactive: only the active one comes back
+    result = _search(db, query="EchoPeak Keys Edge FullSize", category="Keyboards", limit=10)
+    ids = [h.product_id for h in result.hits]
+    assert ids[0] == "MN-KBD-0014"
+    assert "MN-KBD-0027" not in ids
+
+
+def test_query_without_name_words_does_not_change_the_rating_fallback(db):
+    # Generic words never appear in names: same order as without the name ranking
+    result = _search(db, embedder=None, query="wireless for video calls", category="Mice", limit=10)
+    ratings = [(h.rating, h.review_count) for h in result.hits]
+    assert ratings == sorted(ratings, reverse=True)
+
+
+def test_stop_words_only_query_still_returns_results(db):
+    result = _search(db, query="the for a", category="Mice")
+    assert len(result.hits) == 5
+
+
 # --- Data comes from the DB, fallbacks -------------------------------------------------------
 
 

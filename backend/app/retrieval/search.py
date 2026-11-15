@@ -4,8 +4,13 @@
     2. Semantic ranking: cosine distance between the query and product_embeddings.
     3. Use-case ranking: candidates that match the requested use cases. It is a ranking
        signal, NOT a filter: a badly chosen use case worsens the order, never empties it.
-    4. RRF fusion of both rankings, ties broken by rating and then review count.
-    5. Nothing within the budget: the cheapest products that pass every OTHER filter, by
+    4. Name ranking (full-text, E5): candidates whose NAME shares words with the query
+       (brand, line, model number: "Orbit Sound 458"), which embeddings tell apart badly.
+       Any word counts (OR), more shared words rank higher. Only the name: the
+       descriptions are already covered by the semantic ranking, and generic words
+       ("headphones", "wireless") would match half the catalog.
+    5. RRF fusion of the rankings, ties broken by rating and then review count.
+    6. Nothing within the budget: the cheapest products that pass every OTHER filter, by
        price, so the agent can tell the real closest price (the ranking is not by price).
 
 Price and stock always come from the DB, never from the embedded text.
@@ -17,7 +22,8 @@ from decimal import Decimal
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import Text, cast, func, literal_column, select
+from sqlalchemy.dialects.postgresql import TSQUERY
 from sqlalchemy.orm import Session
 
 from app.domain.errors import DomainError
@@ -32,6 +38,9 @@ logger = logging.getLogger(__name__)
 
 RRF_K = 60  # standard RRF constant: dampens the weight of the top positions
 SEMANTIC_TOP_K = 20  # only the 20 nearest candidates get a semantic score
+NAME_TOP_K = 20  # same cap for the name ranking
+# ts_rank weights in {D, C, B, A} order: only the name (weight A) scores, see _name_rank
+NAME_ONLY_WEIGHTS = literal_column("'{0, 0, 0, 1}'::float4[]")
 CHEAPEST_ABOVE_BUDGET = 3
 
 
@@ -108,6 +117,17 @@ def rrf(rankings: Sequence[Sequence[str]], k: int = RRF_K) -> dict[str, float]:
     return scores
 
 
+def _name_rank(query: str):
+    """Step 4: full-text score of the product NAME against the query, 0 if no word matches.
+
+    plainto_tsquery joins the words with AND ('orbit' & 'sound' & '458'): swapping to OR
+    lets a partial name match too, and ts_rank scores the ones sharing more words higher.
+    Uses the indexed search_tsv column, where the name has weight A.
+    """
+    words = func.replace(cast(func.plainto_tsquery("english", query), Text), "&", "|")
+    return func.ts_rank(NAME_ONLY_WEIGHTS, Product.search_tsv, cast(words, TSQUERY))
+
+
 def _resolve_brand(session: Session, brand: str) -> str:
     """Case-insensitive exact match against the brands table."""
     brand_id = session.scalar(select(Brand.id).where(func.lower(Brand.name) == brand.lower()))
@@ -157,7 +177,8 @@ def search(session: Session, q: SearchQuery, embedder: Embedder | None) -> Searc
             logger.warning("Query embedding failed [%s]: %s", error.code, error.message)
 
     # 1. Hard filters
-    columns = [Product.id, Product.recommended_for, Product.rating, Product.review_count]
+    name_rank = _name_rank(q.query).label("name_rank")
+    columns = [Product.id, Product.recommended_for, Product.rating, Product.review_count, name_rank]
     stmt = _filtered(session, select(*columns, *([distance] if distance is not None else [])), q)
     if distance is not None:
         # Outer join: a product not indexed yet is not hidden, it just ranks last
@@ -165,7 +186,7 @@ def search(session: Session, q: SearchQuery, embedder: Embedder | None) -> Searc
 
     candidates = session.execute(stmt).all()
     if not candidates and q.max_price is not None:
-        # 5. Nothing within the budget
+        # 6. Nothing within the budget
         cheapest = session.scalars(
             _filtered(session, select(Product.id), q, with_max_price=False)
             .order_by(Price.current_price, Product.id)
@@ -181,7 +202,7 @@ def search(session: Session, q: SearchQuery, embedder: Embedder | None) -> Searc
     popularity = {c.id: (c.rating or 0, c.review_count or 0) for c in candidates}
     matched = {c.id: sorted(wanted.intersection(c.recommended_for)) for c in candidates}
 
-    # 2-3. Rankings
+    # 2-4. Rankings
     rankings: list[list[str]] = []
     if semantic_used:
         by_distance = sorted(
@@ -192,12 +213,15 @@ def search(session: Session, q: SearchQuery, embedder: Embedder | None) -> Searc
         with_uses = [c for c in candidates if matched[c.id]]
         with_uses.sort(key=lambda c: (-len(matched[c.id]), *(-v for v in popularity[c.id]), c.id))
         rankings.append([c.id for c in with_uses])
+    by_name = sorted((c for c in candidates if c.name_rank > 0), key=lambda c: (-c.name_rank, c.id))
+    if by_name:
+        rankings.append([c.id for c in by_name[:NAME_TOP_K]])
     if not rankings:
         # No embedding and no use cases: best rated first
         by_rating = sorted(candidates, key=lambda c: (*(-v for v in popularity[c.id]), c.id))
         rankings.append([c.id for c in by_rating])
 
-    # 4. Fusion + tie-breakers. Candidates outside every ranking (e.g. not indexed yet)
+    # 5. Fusion + tie-breakers. Candidates outside every ranking (e.g. not indexed yet)
     # are not hidden: they go last, best rated first.
     scores = rrf(rankings)
     ordered = sorted(
