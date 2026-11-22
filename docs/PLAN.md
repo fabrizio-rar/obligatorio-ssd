@@ -48,7 +48,7 @@
 | Voz | ✅ `POST /api/transcribe` (API de OpenAI, ~1 s por mensaje) + botón 🎤 en la UI | `app/stt/`, `app/api/transcribe.py` |
 | Frontend | ✅ N1 (parte FE), N3–N7, N11 y N12 (UI) | `frontend/src/` (estado en `frontend/README.md`) |
 | Tests | ✅ 392 tests de backend (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM` + voz con `FakeTranscriber`, incluidos la transacción de compra y la concurrencia. Frontend: TS `strict` + oxlint, sin tests (§16) | `backend/tests/` |
-| Skills del coding agent | ✅ `testing`, `mercanova-review`, `add-agent-tool` | `.claude/skills/` |
+| Skills del coding agent | ✅ `testing`, `mercanova-review`, `add-agent-tool`, `run-evals` | `.claude/skills/` |
 
 ---
 
@@ -175,7 +175,8 @@ mercanova/
 ├── .claude/skills/
 │   ├── testing/SKILL.md
 │   ├── mercanova-review/SKILL.md   # el code-review (§17)
-│   └── add-agent-tool/SKILL.md
+│   ├── add-agent-tool/SKILL.md
+│   └── run-evals/SKILL.md
 ├── README.md
 ├── docker-compose.yml
 ├── .env.example
@@ -1196,6 +1197,7 @@ La letra pide *"una estrategia de testing adecuada a la arquitectura elegida y c
      - ¿se filtran los productos inactivos?
   3. 🟡 `add-agent-tool` y alguna skill pública (sugerencia de Santiago).
 - **Implementado (08/11):** `.claude/skills/testing/`, `.claude/skills/mercanova-review/` (se llama así y no `code-review` para no chocar con la skill que Claude Code trae incorporada) y `.claude/skills/add-agent-tool/` (el procedimiento de las 9 tools, con las lecciones: el `$ref` del modo estricto, las reglas del prompt con ejemplo y el presupuesto de tokens).
+- **Agregado (22/11):** `.claude/skills/run-evals/`: cuándo correr las evals, de lo gratis (`--check`) a lo caro, cómo leer el reporte, cómo clasificar cada falla (chequeo demasiado estricto, problema real del agente, límite, inestable) y cómo agregar un caso. Se escribió al final, para dejar documentado el proceso que se siguió con las evals (v1 → v2, `docs/evidence/evals/README.md`).
 - **Evidencia para el PDF:** prompts enviados al agente y cómo se revisó el resultado. Primera corrida de `mercanova-review`: `docs/evidence/2026-11-08-review-skill.md` (encontró un error en la propia skill: un glob sin comillas que fallaba en zsh).
 
 ---
@@ -1275,7 +1277,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ✅ tarjetas por ID, tabla comparativa (`comparison_ids` → `/api/products/compare`, en el chat y en `/compare`), aclaraciones, chips, reintentar, confirmación de nivel 3, `refresh_cart`, historial |
 | N12 | Voz (API de OpenAI + botón 🎤) | RF-08 | B + C | ✅ backend (`POST /api/transcribe` con la API de OpenAI, §11) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input) |
 | N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | ✅ dominio, API, agente con FakeLLM, transacción de compra y concurrencia (392 tests) |
-| N14 | `AGENTS.md` + 2 skills | §17 | Todos | ✅ `AGENTS.md` + `CLAUDE.md` + 3 skills (`testing`, `mercanova-review`, `add-agent-tool`) + evidencia en `docs/evidence/` |
+| N14 | `AGENTS.md` + 2 skills | §17 | Todos | ✅ `AGENTS.md` + `CLAUDE.md` + 4 skills (`testing`, `mercanova-review`, `add-agent-tool`, `run-evals`) + evidencia en `docs/evidence/` |
 
 **Extras (en orden de prioridad; se cortan desde el final):**
 | # | Extra | Si no llega | Estado (08/11) |

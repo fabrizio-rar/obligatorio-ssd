@@ -21,7 +21,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [x] Auth (N3) y catálogo (N4): backend (`/api/auth/*`, `/api/products` con filtros de categoría, marca, precio y stock y orden (`sort`), `/api/products/{id}`, `/api/categories`, `/api/brands`, `/api/warehouses`) + UI (login/registro, grilla con filtros y paginación, detalle con specs, stock por sucursal y relacionados)
 - [x] Carrito (N5): backend + tools del agente listos (`domain/cart.py`, `/api/cart*`, `get_cart`/`add_to_cart`/`update_cart_item`/`remove_from_cart`/`clear_cart`) + UI (drawer con +/−, quitar, vaciar con confirmación, avisos de stock; badge que se refresca con `ui_actions`)
 - [x] Chat en el frontend (N11): tarjetas por ID (`/products?ids=`), tabla comparativa (`comparison_ids` → `/api/products/compare`, compacta en el chat y completa en `/compare`), aclaraciones, chips, reintentar, tarjeta de confirmación de nivel 3 e historial de conversaciones
-- [x] `AGENTS.md` + skills (N14): `testing`, `mercanova-review`, `add-agent-tool`
+- [x] `AGENTS.md` + skills (N14): `testing`, `mercanova-review`, `add-agent-tool`, `run-evals`
 - [x] Voz (N12): backend (`POST /api/transcribe`) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input)
 - [x] Tests (N13): 392 de backend (`pytest`, sin OpenAI), incluidos la transacción de compra y la concurrencia
 - [x] Robustez del agente (N10). Sin retry propio ante errores de la DB (decisión: `pool_pre_ping` + rollback)
@@ -177,6 +177,7 @@ docker compose exec backend python -m scripts.run_evals [--efforts low,medium] [
 | `testing` | Al escribir o cambiar código del backend, y antes de dar una tarea por terminada |
 | `mercanova-review` | Antes de commitear, o para revisar un diff, commit o rango contra las reglas de este archivo |
 | `add-agent-tool` | Al agregar o cambiar una tool del agente |
+| `run-evals` | Después de cambiar el prompt, una tool, el modelo o el effort: correr las evals e interpretar cada falla |
 
 
 1. Leé la sección de `docs/PLAN.md` que corresponde a la tarea.
