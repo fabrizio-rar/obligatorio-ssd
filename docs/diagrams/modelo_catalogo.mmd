@@ -1,0 +1,77 @@
+erDiagram
+    direction LR
+
+    categories ||--o{ subcategories : ""
+    subcategories ||--o{ products : ""
+    brands ||--o{ products : ""
+    products ||--|| prices : ""
+    products ||--o{ product_specs : ""
+    products ||--o{ inventory : ""
+    warehouses ||--o{ inventory : ""
+    products ||--o{ product_relations : ""
+    products ||--o| product_embeddings : ""
+
+    categories {
+        string id PK
+        string name
+    }
+    subcategories {
+        string id PK
+        string category_id FK
+        string name
+    }
+    brands {
+        string id PK
+        string name
+        string positioning
+    }
+    products {
+        string id PK
+        string sku UK
+        string brand_id FK
+        string subcategory_id FK
+        string name
+        text_array recommended_for
+        text_array not_recommended_for
+        decimal rating
+        bool active
+        tsvector search_tsv
+    }
+    prices {
+        string product_id PK, FK
+        decimal list_price
+        decimal current_price
+        int discount_percent
+    }
+    product_specs {
+        string product_id PK, FK
+        string attribute_name PK
+        string value_text
+        decimal value_number
+        string unit
+    }
+    warehouses {
+        string id PK
+        string name
+        string city
+        bool pickup_enabled
+    }
+    inventory {
+        string product_id PK, FK
+        string warehouse_id PK, FK
+        int on_hand_qty
+        int reserved_qty
+        int available_qty "calculada"
+    }
+    product_relations {
+        string product_id PK, FK
+        string related_product_id PK, FK
+        string relation_type PK
+        decimal strength
+    }
+    product_embeddings {
+        string product_id PK, FK
+        vector embedding "1536 dims"
+        string content_hash
+        string model
+    }

@@ -47,7 +47,7 @@
 | Checkout + órdenes | ✅ (09–10/11) backend + UI + tools del agente: checkout (envío / retiro con disponibilidad por sucursal, pago simulado), modal de confirmación, transacción con revalidación y asignación por sucursal, compra confirmada, "Mis órdenes"; el chat lista órdenes y lleva al checkout precargado (nunca compra) | `app/domain/checkout.py`, `inventory.py`, `/api/checkout*`, `/api/orders*`, `frontend/src/features/checkout/`, `orders/` |
 | Voz | ✅ `POST /api/transcribe` (API de OpenAI, ~1 s por mensaje) + botón 🎤 en la UI | `app/stt/`, `app/api/transcribe.py` |
 | Frontend | ✅ N1 (parte FE), N3–N7, N11 y N12 (UI) | `frontend/src/` (estado en `frontend/README.md`) |
-| Tests | ✅ 366 tests de backend (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM` + voz con `FakeTranscriber`. Faltan los de la transacción de compra y concurrencia (N6). Frontend: TS `strict` + oxlint, sin tests (§16) | `backend/tests/` |
+| Tests | ✅ 392 tests de backend (`pytest`, sin OpenAI): unit + integración con Postgres real + agente con `FakeLLM` + voz con `FakeTranscriber`, incluidos la transacción de compra y la concurrencia. Frontend: TS `strict` + oxlint, sin tests (§16) | `backend/tests/` |
 | Skills del coding agent | ✅ `testing`, `mercanova-review`, `add-agent-tool` | `.claude/skills/` |
 
 ---
@@ -136,7 +136,7 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 | RF-14 | Orden con ID | `MN-ORD-000123`, con ítems a **precio congelado** y asignación de stock por sucursal | domain | ✅ backend (`MN-ORD-000001`, precio congelado, asignación por sucursal) |
 | RF-15 | Actualización de estado | Descuento atómico de `on_hand` por sucursal en la misma transacción que la orden | domain | ✅ backend (descuento de `on_hand` por sucursal en la misma transacción) |
 | RF-16 | Historial | `GET /orders` + página "Mis órdenes" + tool `get_orders` (por usuario) | API + FE + agent | ✅ `GET /orders` + página "Mis órdenes" + tools `get_orders` / `get_order` |
-| RF-17 | Casos límite | §15 | todos | 🟡 cubiertos los de catálogo, carrito y agente; faltan los de checkout |
+| RF-17 | Casos límite | §15 | todos | ✅ catálogo, carrito, agente y checkout (tabla en §15) |
 | RF-18 | No inventar | Guardrails (§10.7) | agent | ✅ guardrails + datos solo de tools |
 
 ### No funcionales
@@ -145,7 +145,7 @@ Archivo: `MercaNova_dataset_obligatorio_2.xlsx`, con **8 hojas** y un modelo ya 
 | RNF-01/02/07 | `docker compose up --build` desde un clone limpio, con migraciones e ingesta automáticas al primer arranque | ✅ backend + db + frontend (`:5173`) |
 | RNF-03 | Todo por variables de entorno, con `.env.example` versionado. Ni keys ni modelos hardcodeados | ✅ |
 | RNF-04 | Transacciones, errores tipados, UI con reintentar; la app sigue funcionando si el LLM falla | ✅ backend: errores tipados uniformes, transacciones, sin key levanta igual (chat 503) |
-| RNF-05 | §16 | ✅ 366 tests, incluidos la transacción de compra y la concurrencia |
+| RNF-05 | §16 | ✅ 392 tests, incluidos la transacción de compra y la concurrencia |
 | RNF-06 | Capas separadas, ruff + eslint, TS estricto | ✅ backend (ruff) + frontend (TS `strict` + oxlint en lugar de eslint) |
 
 ---
@@ -1168,7 +1168,7 @@ La letra pide *"una estrategia de testing adecuada a la arquitectura elegida y c
 - **Decisiones con el equipo:** cada caso se corre **3 veces** (el modelo no es determinista) y se compara `reasoning effort` **low vs medium**.
 - **Resultado (10/11):** `low` **102/102 (100 %)**, p50 5,1 s / p95 8,8 s, ~13 mil tokens y USD 0,0014 por turno; `medium` 100/102 (98 %), p95 10,3 s, mismo costo. **Se mantiene `low`**: `medium` no mejora y es más lento. La primera corrida dio 85 % / 89 %: al revisar las respuestas, la mayoría eran chequeos mal calibrados (frases correctas que no estaban en la lista) y dos eran problemas reales del agente que se corrigieron en el prompt (decía que un producto nombrado "no está en el catálogo" porque no aparecía en una búsqueda; a "agregá ese" con varios productos agregaba el primero). Detalle y archivos en `docs/evidence/evals/README.md`.
 
-**Implementado (08/11):** 366 tests (`tests/unit/` + `tests/integration/`, Postgres real `mercanova_test`): ingesta, retrieval, búsqueda, auth, catálogo, carrito, comparación y relacionados, historial, voz, schema estricto de las tools y el agente con `FakeLLM` (pipeline, stop conditions, nivel 3 sin ejecutar, IDs validados). Faltan: transacción de compra, concurrencia y `PRICE_CHANGED` (N6), y las evals (E1). El frontend no tiene tests (no se piden E2E).
+**Implementado (22/11):** 392 tests (`tests/unit/` + `tests/integration/`, Postgres real `mercanova_test`): ingesta, retrieval, búsqueda, auth, catálogo, carrito, comparación y relacionados, historial, voz, schema estricto de las tools y el agente con `FakeLLM` (pipeline, stop conditions, nivel 3 sin ejecutar, IDs validados). También la transacción de compra, la concurrencia y `PRICE_CHANGED` (N6); las evals (E1) están aparte. El frontend no tiene tests (no se piden E2E).
 
 ---
 
@@ -1274,7 +1274,7 @@ Hoy es **03/11** y la entrega es el **08/12**. Defensas el **18/11** y el **25/1
 | N10 | Robustez del agente: **pipeline de validación** (schema → auth/negocio → ejecución), **retry** solo transitorio, **fallback**, **stop conditions** (pasos, presupuesto, loop, error, confirmación), contexto recortado, IDs válidos, render desde la DB, compra fuera del agente, confirmación para quitar/vaciar | RF-12/17/18 | B | ✅ pipeline de 3 etapas, retry transitorio del LLM (SDK), fallbacks honestos, las 6 stop conditions, historial y tool results recortados, IDs validados contra tools + DB, tarjetas desde la API, ninguna tool compra, confirmación para quitar/vaciar. **Decisión (09/11):** sin retry propio ante errores de la DB: `pool_pre_ping` descarta conexiones caídas y una compra a medias hace rollback (el usuario reintenta) |
 | N11 | Chat en el FE con tarjetas, tabla comparativa, aclaraciones y errores con reintentar | §13 | C | ✅ tarjetas por ID, tabla comparativa (`comparison_ids` → `/api/products/compare`, en el chat y en `/compare`), aclaraciones, chips, reintentar, confirmación de nivel 3, `refresh_cart`, historial |
 | N12 | Voz (API de OpenAI + botón 🎤) | RF-08 | B + C | ✅ backend (`POST /api/transcribe` con la API de OpenAI, §11) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input) |
-| N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | ✅ dominio, API, agente con FakeLLM, transacción de compra y concurrencia (366 tests) |
+| N13 | Tests de dominio, de la transacción (incluida la concurrencia) y del agente con FakeLLM | RNF-05 | Todos | ✅ dominio, API, agente con FakeLLM, transacción de compra y concurrencia (392 tests) |
 | N14 | `AGENTS.md` + 2 skills | §17 | Todos | ✅ `AGENTS.md` + `CLAUDE.md` + 3 skills (`testing`, `mercanova-review`, `add-agent-tool`) + evidencia en `docs/evidence/` |
 
 **Extras (en orden de prioridad; se cortan desde el final):**

@@ -23,7 +23,7 @@ E-commerce de electrónica (MercaNova, Uruguay) con un **asistente conversaciona
 - [x] Chat en el frontend (N11): tarjetas por ID (`/products?ids=`), tabla comparativa (`comparison_ids` → `/api/products/compare`, compacta en el chat y completa en `/compare`), aclaraciones, chips, reintentar, tarjeta de confirmación de nivel 3 e historial de conversaciones
 - [x] `AGENTS.md` + skills (N14): `testing`, `mercanova-review`, `add-agent-tool`
 - [x] Voz (N12): backend (`POST /api/transcribe`) + UI (botón 🎤 (mantener apretado o tocar dos veces), corte a los 30 s, línea de nivel en vivo con aviso "No llega audio", permiso denegado, grabaciones mudas no se envían, texto editable en el input)
-- [x] Tests (N13): 366 de backend (`pytest`, sin OpenAI), incluidos la transacción de compra y la concurrencia
+- [x] Tests (N13): 392 de backend (`pytest`, sin OpenAI), incluidos la transacción de compra y la concurrencia
 - [x] Robustez del agente (N10). Sin retry propio ante errores de la DB (decisión: `pool_pre_ping` + rollback)
 - [x] Checkout (N6) y órdenes (N7): backend (`domain/checkout.py`, `/api/checkout*`, `/api/orders*`, transacción con revalidación y asignación por sucursal) + UI (`/checkout`, modal de confirmación, compra confirmada, "Mis órdenes"). Ver `docs/PLAN.md` §12.1 y §12.2
 

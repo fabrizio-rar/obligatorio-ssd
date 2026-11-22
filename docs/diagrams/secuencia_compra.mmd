@@ -1,0 +1,38 @@
+sequenceDiagram
+    autonumber
+    actor U as Usuario
+    participant FE as Frontend
+    participant API as API (FastAPI)
+    participant DOM as Dominio (checkout)
+    participant DB as PostgreSQL
+
+    U->>FE: Ir al checkout (desde el carrito o el botón del chat)
+    FE->>API: GET /api/checkout/options
+    API->>DB: sucursales que cubren el carrito, costo de envío
+    API-->>FE: opciones de entrega y pago simulado
+    U->>FE: datos, método de entrega y pago → "Revisar compra"
+    FE->>API: POST /api/checkout
+    API->>DOM: crear checkout
+    DOM->>DB: validar carrito, productos activos y stock<br/>crear orden PENDING_CONFIRMATION con precios cotizados
+    DOM-->>API: resumen de la orden
+    API-->>FE: resumen
+    FE-->>U: diálogo con productos, cantidades, precios, envío y total
+    U->>FE: "Confirmar compra"
+    FE->>API: POST /api/orders/{id}/confirm
+    API->>DOM: confirmar orden
+    DOM->>DB: BEGIN · bloquear orden, carrito, precios e inventario (FOR UPDATE)
+    DOM->>DB: revalidar carrito → producto activo → precio → stock
+    alt el precio cambió
+        DOM->>DB: actualizar la orden pendiente con el precio nuevo
+        API-->>FE: 409 PRICE_CHANGED + resumen nuevo
+        FE-->>U: diálogo con el precio nuevo resaltado (confirma otra vez)
+    else sin stock, producto inactivo o carrito modificado
+        DOM->>DB: ROLLBACK
+        API-->>FE: 409 OUT_OF_STOCK / INACTIVE / CART_CHANGED
+        FE-->>U: motivo del rechazo
+    else todo sigue vigente
+        DOM->>DB: asignar stock por sucursal, descontar on_hand
+        DOM->>DB: orden CONFIRMED, vaciar carrito · COMMIT
+        API-->>FE: orden MN-ORD-000001
+        FE-->>U: "¡Gracias por tu compra!" y la orden en "Mis órdenes"
+    end

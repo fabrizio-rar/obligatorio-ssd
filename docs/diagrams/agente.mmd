@@ -1,0 +1,27 @@
+flowchart LR
+    MSG["Mensaje del usuario<br/>(texto o voz transcrita)"]
+    CTX["<b>Armar el contexto</b><br/>instrucciones + resumen del estado<br/>+ últimos 10 mensajes + tools"]
+    LLM{{"<b>gpt-6-luna</b><br/>Responses API"}}
+    VAL["<b>Pipeline de la tool call</b><br/>1. schema y argumentos<br/>2. autorización y reglas<br/>3. ejecución en el dominio"]
+    RES["Resultado recortado<br/>o error como dato"]
+    STOP{{"¿Condición<br/>de corte?"}}
+    OUT["<b>Validar la respuesta</b><br/>schema estricto<br/>+ filtro de IDs"]
+    FB["Respuesta controlada<br/>(fallback o tarjeta<br/>de confirmación)"]
+    SAVE["Guardar mensajes,<br/>estado y tool calls"]
+    UI["<b>Frontend</b><br/>mensaje + tarjetas<br/>pedidas a la API por ID"]
+
+    MSG --> CTX --> LLM
+    LLM -- "pide tools" --> VAL --> RES --> STOP
+    STOP -- "no" --> LLM
+    STOP -- "sí" --> FB
+    LLM -- "respuesta final" --> OUT
+    OUT --> SAVE
+    FB --> SAVE
+    SAVE --> UI
+
+    classDef core fill:#e8f0fe,stroke:#4a6fa5,color:#111
+    classDef model fill:#f3e8fd,stroke:#7a4fa5,color:#111
+    classDef ext fill:#f3f3f3,stroke:#888,color:#222
+    class CTX,VAL,RES,OUT,FB,SAVE core
+    class LLM,STOP model
+    class MSG,UI ext

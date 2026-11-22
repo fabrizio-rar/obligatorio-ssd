@@ -1,0 +1,86 @@
+erDiagram
+    direction LR
+
+    users ||--o{ auth_tokens : ""
+    users ||--o| carts : ""
+    carts ||--o{ cart_items : ""
+    products ||--o{ cart_items : ""
+    users ||--o{ orders : ""
+    orders ||--|{ order_items : ""
+    products ||--o{ order_items : ""
+    order_items ||--|{ order_item_allocations : ""
+    warehouses ||--o{ order_item_allocations : ""
+    warehouses |o--o{ orders : "retiro"
+    users ||--o{ conversations : ""
+    conversations ||--o{ chat_messages : ""
+    conversations ||--o| agent_state : ""
+    chat_messages ||--o{ tool_call_logs : ""
+
+    products {
+        string id PK "ver catálogo"
+    }
+    warehouses {
+        string id PK "ver catálogo"
+    }
+    users {
+        int id PK
+        string username UK
+        string password_hash "bcrypt"
+    }
+    auth_tokens {
+        string token_hash PK
+        int user_id FK
+    }
+    carts {
+        int id PK
+        int user_id FK, UK
+    }
+    cart_items {
+        int cart_id PK, FK
+        string product_id PK, FK
+        int quantity
+    }
+    orders {
+        int id PK
+        string code UK "MN-ORD-000001"
+        int user_id FK
+        string status
+        string delivery_method
+        string pickup_warehouse_id FK
+        string payment_method
+        decimal total
+    }
+    order_items {
+        int id PK
+        int order_id FK
+        string product_id FK
+        decimal unit_price "congelado"
+        int quantity
+    }
+    order_item_allocations {
+        int order_item_id PK, FK
+        string warehouse_id PK, FK
+        int quantity
+    }
+    conversations {
+        uuid id PK
+        int user_id FK
+        string title
+    }
+    chat_messages {
+        int id PK
+        uuid conversation_id FK
+        string role
+        jsonb structured
+    }
+    agent_state {
+        uuid conversation_id PK, FK
+        jsonb state
+    }
+    tool_call_logs {
+        int id PK
+        int message_id FK
+        string tool_name
+        jsonb arguments
+        bool is_error
+    }

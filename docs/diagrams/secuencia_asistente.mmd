@@ -1,0 +1,32 @@
+sequenceDiagram
+    autonumber
+    actor U as Usuario
+    participant FE as Frontend
+    participant API as API (FastAPI)
+    participant AG as Agente
+    participant T as Tools y dominio
+    participant DB as PostgreSQL
+    participant OAI as OpenAI
+
+    U->>FE: "Auriculares para videollamadas, hasta USD 200"
+    FE->>API: POST /api/chat {message, conversation_id} + token
+    API->>DB: validar token, cargar historial (10) y estado
+    API->>AG: ejecutar turno
+    AG->>OAI: instrucciones + resumen del estado + historial + mensaje + 12 tools
+    OAI-->>AG: tool call search_products(query="headphones for video calls",<br/>category=Headphones, max_price=200, use_cases=[calls])
+    AG->>AG: validar argumentos (schema estricto)
+    AG->>T: ejecutar tool (user_id tomado del token)
+    T->>OAI: embedding de la consulta
+    T->>DB: filtros SQL + pgvector + full-text, fusión RRF
+    DB-->>T: productos con precio y stock actuales
+    T-->>AG: resultado recortado
+    AG->>OAI: historial + resultado de la tool
+    OAI-->>AG: respuesta final {type: recommendation, message, product_ids}
+    AG->>AG: validar schema y filtrar IDs no vistos o inactivos
+    AG->>DB: guardar mensajes, estado y registro de tool calls
+    AG-->>API: respuesta estructurada
+    API-->>FE: mensaje + product_ids
+    FE->>API: GET /api/products?ids=...
+    API->>DB: datos actuales de los productos
+    API-->>FE: tarjetas con precio y stock
+    FE-->>U: recomendación explicada + tarjetas

@@ -1,0 +1,49 @@
+flowchart LR
+    U(("Usuario"))
+
+    subgraph NAV["Navegador"]
+        SPA["<b>Frontend</b> · React SPA<br/>catálogo · chat · voz · carrito<br/>checkout · órdenes"]
+    end
+
+    subgraph DC["Docker Compose (local)"]
+        direction LR
+        subgraph FE["frontend · :5173"]
+            VITE["Servidor Vite<br/>sirve la SPA y reenvía /api"]
+        end
+        subgraph BE["backend · :8000 · FastAPI"]
+            API["<b>API REST</b><br/>auth · catálogo · carrito<br/>checkout · órdenes · chat · voz"]
+            AG["<b>Agente</b><br/>loop · 12 tools · guardrails<br/>estado de la conversación"]
+            DOM["<b>Dominio</b><br/>catálogo · carrito · checkout<br/>inventario por sucursal"]
+            RET["<b>Búsqueda híbrida</b><br/>vectorial + filtros SQL<br/>+ full-text (RRF)"]
+            STT["<b>Transcriptor</b><br/>audio → texto"]
+            ING["<b>Ingesta</b> (al arrancar)<br/>Excel → tablas + embeddings"]
+        end
+        DB[("<b>PostgreSQL 16 + pgvector</b><br/>catálogo · inventario · vectores<br/>carrito · órdenes · usuarios · chat")]
+    end
+
+    OAI["<b>API de OpenAI</b><br/>gpt-6-luna · text-embedding-3-small<br/>gpt-4o-transcribe"]
+    XLS[/"Dataset Excel<br/>(8 hojas)"/]
+
+    U --> SPA
+    SPA -- "HTTP /api" --> VITE --> API
+    API --> DOM
+    API --> AG
+    API --> STT
+    AG -- "tools" --> DOM
+    AG -- "tools" --> RET
+    AG -- "historial y estado" --> DB
+    AG -- "Responses API" --> OAI
+    RET --> DB
+    RET -- "embedding de la consulta" --> OAI
+    DOM -- "transacciones" --> DB
+    STT --> OAI
+    XLS --> ING
+    ING --> DB
+    ING -- "embeddings" --> OAI
+
+    classDef ext fill:#f3f3f3,stroke:#888,color:#222
+    classDef core fill:#e8f0fe,stroke:#4a6fa5,color:#111
+    classDef data fill:#fff4e0,stroke:#c08a2b,color:#111
+    class OAI,XLS,U ext
+    class API,AG,DOM,RET,STT,ING,SPA,VITE core
+    class DB data

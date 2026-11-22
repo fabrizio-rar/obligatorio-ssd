@@ -1,0 +1,37 @@
+flowchart TB
+    subgraph IDX["1 · Indexado (al arrancar la aplicación)"]
+        direction LR
+        X[/"Excel<br/>8 hojas"/] --> V["Leer, normalizar<br/>y validar"]
+        V --> T[("Tablas del<br/>catálogo")]
+        T --> D["Documento por producto<br/>(sin precio, stock ni rating)"]
+        D --> H{{"¿Cambió el hash?"}}
+        H -- "sí" --> E["text-embedding-3-small"]
+        E --> P[("pgvector<br/>índice HNSW coseno")]
+        H -- "no: se saltea" --> P
+    end
+
+    subgraph QRY["2 · Consulta (tool search_products)"]
+        direction LR
+        PV[("pgvector")] -- "vectores" --> R1
+        A["Argumentos del agente<br/>consulta en inglés + filtros"] --> F["Filtros SQL<br/>activo · categoría · marca<br/>precio · stock"]
+        A --> QE["Embedding<br/>de la consulta"]
+        F --> R2["Ranking<br/>por usos"]
+        F --> R3["Ranking<br/>por nombre"]
+        F --> R1["Ranking<br/>semántico"]
+        QE --> R1
+        R1 --> RRF["Fusión RRF"]
+        R2 --> RRF
+        R3 --> RRF
+        RRF --> OUT["Productos con precio y stock<br/>leídos de las tablas"]
+    end
+
+    IDX ~~~ QRY
+
+    classDef core fill:#e8f0fe,stroke:#4a6fa5,color:#111
+    classDef data fill:#fff4e0,stroke:#c08a2b,color:#111
+    classDef ext fill:#f3f3f3,stroke:#888,color:#222
+    classDef model fill:#f3e8fd,stroke:#7a4fa5,color:#111
+    class V,D,F,R1,R2,R3,RRF,OUT,QE core
+    class T,P,PV data
+    class X,A ext
+    class E,H model
